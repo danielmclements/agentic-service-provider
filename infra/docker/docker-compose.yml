@@ -9,20 +9,69 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d agentic_msp"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   temporal:
     image: temporalio/auto-setup:1.25.2
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     environment:
-      DB: postgresql
+      DB: postgres12
       DB_PORT: 5432
       POSTGRES_USER: postgres
       POSTGRES_PWD: postgres
       POSTGRES_SEEDS: postgres
-      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development.yaml
+      POSTGRES_DB: agentic_msp
     ports:
       - "7233:7233"
+
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/api-server/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/agentic_msp
+      PORT: 4000
+      NODE_ENV: development
+      API_KEY: dev-api-key
+      OPERATOR_API_KEY: dev-operator-key
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_TASK_QUEUE: agentic-msp
+      TEMPORAL_NAMESPACE: default
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+    ports:
+      - "4000:4000"
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/agentic_msp
+      NODE_ENV: development
+      API_KEY: dev-api-key
+      OPERATOR_API_KEY: dev-operator-key
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_TASK_QUEUE: agentic-msp
+      TEMPORAL_NAMESPACE: default
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
 
 volumes:
   postgres-data:

@@ -3,8 +3,10 @@ import { TenantContext } from "@asp/types";
 
 export class TenantContextService {
   async getTenantContext(tenantId: string): Promise<TenantContext> {
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: tenantId },
+    const tenant = await prisma.tenant.findFirst({
+      where: {
+        OR: [{ id: tenantId }, { slug: tenantId }]
+      },
       include: { policy: true }
     });
 

@@ -14,6 +14,11 @@ const tenantContextService = new TenantContextService();
 const approvalService = new ApprovalService();
 const auditLogService = new AuditLogService();
 
+async function resolveTenantId(tenantIdOrSlug: string) {
+  const tenantContext = await tenantContextService.getTenantContext(tenantIdOrSlug);
+  return tenantContext.tenantId;
+}
+
 function requireApiKey(req: express.Request, res: express.Response, next: express.NextFunction) {
   if (req.header("x-api-key") !== env.API_KEY) {
     res.status(401).json({ error: "Unauthorized" });
@@ -71,10 +76,16 @@ export function createApp(): express.Express {
   app.post("/api/tickets", requireApiKey, requireTenantId, async (req, res) => {
     try {
       const input = ticketIntakeSchema.parse(req.body);
-      await tenantContextService.getTenantContext(input.tenant_id);
+      const tenantId = await resolveTenantId(input.tenant_id);
 
       const idempotencyKey = req.header("idempotency-key") ?? undefined;
-      const { ticket, executionRun, deduplicated } = await ticketIntakeService.createTicket(input, idempotencyKey);
+      const { ticket, executionRun, deduplicated } = await ticketIntakeService.createTicket(
+        {
+          ...input,
+          tenant_id: tenantId
+        },
+        idempotencyKey
+      );
 
       if (deduplicated && executionRun) {
         res.status(200).json({
@@ -124,13 +135,15 @@ export function createApp(): express.Express {
   });
 
   app.get("/api/tickets", requireApiKey, requireTenantId, async (req, res) => {
-    const tickets = await ticketIntakeService.listTickets(req.tenantId!);
+    const tenantId = await resolveTenantId(req.tenantId!);
+    const tickets = await ticketIntakeService.listTickets(tenantId);
     res.json({ tickets });
   });
 
   app.get("/api/tickets/:id", requireApiKey, requireTenantId, async (req, res) => {
     const ticketId = String(req.params.id);
-    const ticket = await ticketIntakeService.getTicketView(ticketId, req.tenantId!);
+    const tenantId = await resolveTenantId(req.tenantId!);
+    const ticket = await ticketIntakeService.getTicketView(ticketId, tenantId);
 
     if (!ticket) {
       res.status(404).json({ error: "Ticket not found" });
@@ -142,18 +155,20 @@ export function createApp(): express.Express {
 
   app.get("/api/approvals", requireOperatorKey, requireTenantId, async (req, res) => {
     const status = typeof req.query.status === "string" ? (req.query.status as "PENDING" | "APPROVED" | "REJECTED") : undefined;
-    const approvals = await approvalService.listApprovals(req.tenantId!, status);
+    const tenantId = await resolveTenantId(req.tenantId!);
+    const approvals = await approvalService.listApprovals(tenantId, status);
     res.json({ approvals });
   });
 
   app.post("/api/approvals/:id/decision", requireOperatorKey, requireTenantId, async (req, res) => {
     try {
       const approvalId = String(req.params.id);
+      const tenantId = await resolveTenantId(req.tenantId!);
       const input = approvalDecisionSchema.parse(req.body);
-      const result = await approvalService.applyDecision(approvalId, req.tenantId!, input);
+      const result = await approvalService.applyDecision(approvalId, tenantId, input);
 
       await auditLogService.log({
-        tenantId: req.tenantId!,
+        tenantId,
         ticketId: undefined,
         actionRequestId: undefined,
         eventType: "APPROVAL_DECIDED",
@@ -184,7 +199,8 @@ export function createApp(): express.Express {
 
   app.get("/api/audit/:ticketId", requireApiKey, requireTenantId, async (req, res) => {
     const ticketId = String(req.params.ticketId);
-    const events = await auditLogService.getTicketAuditTrail(ticketId, req.tenantId!);
+    const tenantId = await resolveTenantId(req.tenantId!);
+    const events = await auditLogService.getTicketAuditTrail(ticketId, tenantId);
     res.json({ events });
   });
 
