@@ -121,6 +121,19 @@ export interface ApprovalDecisionInput {
   comment?: string;
 }
 
+export interface ApprovalDecisionResult {
+  approval: {
+    id: string;
+    status: ApprovalStatus;
+    reviewerIdentity?: string | null;
+    reviewerComment?: string | null;
+    decidedAt?: string | Date | null;
+  };
+  workflowId: string | null;
+  ticketId: string;
+  actionRequestId: string;
+}
+
 export interface AuditEvent {
   tenantId: string;
   ticketId?: string;

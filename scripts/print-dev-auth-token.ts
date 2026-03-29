@@ -23,6 +23,7 @@ const email = process.argv[2] ?? "daniel.clements@acme.com";
 const displayName = process.argv[3] ?? "Daniel Clements";
 const sub = process.argv[4] ?? "auth0|daniel.clements";
 const orgId = process.argv[5] ?? "org_acme";
+const orgName = process.argv[8] ?? "acme";
 const tenantId = process.argv[6] ?? "tenant-1";
 const sessionId = process.argv[7] ?? "sid-daniel-clements-local";
 const now = Math.floor(Date.now() / 1000);
@@ -38,6 +39,7 @@ const payload = {
   sub,
   sid: sessionId,
   org_id: orgId,
+  org_name: orgName,
   iat: now,
   exp: now + 8 * 60 * 60,
   auth_time: now,

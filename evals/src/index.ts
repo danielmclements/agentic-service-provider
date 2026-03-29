@@ -10,6 +10,13 @@ const tenantContext: TenantContext = {
     DISABLE_MFA: "BLOCK"
   },
   identityProvider: "MOCK",
+  verification: {
+    requiredActions: ["RESET_PASSWORD", "ADD_TO_GROUP", "DISABLE_MFA"],
+    primaryMethod: "PUSH",
+    allowSmsFallback: false,
+    requireManualReviewOnMissingFactor: true,
+    challengeTtlMinutes: 10
+  },
   model: {
     provider: "heuristic",
     modelName: "eval-heuristic"

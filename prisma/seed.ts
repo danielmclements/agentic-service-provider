@@ -34,10 +34,13 @@ async function seed() {
 
   await prisma.tenantAuthConnection.upsert({
     where: { auth0OrganizationId: "org_acme" },
-    update: {},
+    update: {
+      auth0OrganizationName: "acme"
+    },
     create: {
       tenantId: tenant.id,
       auth0OrganizationId: "org_acme",
+      auth0OrganizationName: "acme",
       displayName: "Acme Workforce",
       strategy: "OIDC",
       connectionName: "acme-entra",

@@ -1,0 +1,111 @@
+name: CI And Deploy Production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      run_seed:
+        description: "Run prisma seed during deploy"
+        required: false
+        default: "false"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+  deploy:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH
+        env:
+          PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          PROD_SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$PROD_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$PROD_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Sync repository to server
+        env:
+          PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+          PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+          PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+          PROD_DEPLOY_PATH: ${{ vars.PROD_DEPLOY_PATH }}
+        run: |
+          test -n "$PROD_DEPLOY_PATH"
+          ssh -p "${PROD_SSH_PORT:-22}" "${PROD_SSH_USER}@${PROD_SSH_HOST}" "mkdir -p '$PROD_DEPLOY_PATH'"
+          rsync -az --delete \
+            --exclude '.git' \
+            --exclude 'node_modules' \
+            --exclude '.env' \
+            --exclude '.env.production' \
+            --exclude 'infra/docker/secrets' \
+            ./ "${PROD_SSH_USER}@${PROD_SSH_HOST}:${PROD_DEPLOY_PATH}/"
+
+      - name: Upload production env and secrets
+        env:
+          PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+          PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+          PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+          PROD_DEPLOY_PATH: ${{ vars.PROD_DEPLOY_PATH }}
+          PROD_ENV_FILE: ${{ secrets.PROD_ENV_FILE }}
+          PROD_DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+          PROD_POSTGRES_PASSWORD: ${{ secrets.PROD_POSTGRES_PASSWORD }}
+          PROD_AUTH0_CLIENT_SECRET: ${{ secrets.PROD_AUTH0_CLIENT_SECRET }}
+          PROD_OPENAI_API_KEY: ${{ secrets.PROD_OPENAI_API_KEY }}
+        run: |
+          rm -rf .deploy-secrets
+          mkdir -p .deploy-secrets/infra/docker/secrets
+          printf '%s' "$PROD_ENV_FILE" > .deploy-secrets/.env.production
+          printf '%s' "$PROD_DATABASE_URL" > .deploy-secrets/infra/docker/secrets/database_url.txt
+          printf '%s' "$PROD_POSTGRES_PASSWORD" > .deploy-secrets/infra/docker/secrets/postgres_password.txt
+          printf '%s' "$PROD_AUTH0_CLIENT_SECRET" > .deploy-secrets/infra/docker/secrets/auth0_client_secret.txt
+          printf '%s' "$PROD_OPENAI_API_KEY" > .deploy-secrets/infra/docker/secrets/openai_api_key.txt
+          chmod 600 .deploy-secrets/.env.production .deploy-secrets/infra/docker/secrets/*.txt
+
+          ssh -p "${PROD_SSH_PORT:-22}" "${PROD_SSH_USER}@${PROD_SSH_HOST}" "mkdir -p '$PROD_DEPLOY_PATH/infra/docker/secrets'"
+          rsync -az .deploy-secrets/.env.production "${PROD_SSH_USER}@${PROD_SSH_HOST}:${PROD_DEPLOY_PATH}/.env.production"
+          rsync -az .deploy-secrets/infra/docker/secrets/ "${PROD_SSH_USER}@${PROD_SSH_HOST}:${PROD_DEPLOY_PATH}/infra/docker/secrets/"
+          ssh -p "${PROD_SSH_PORT:-22}" "${PROD_SSH_USER}@${PROD_SSH_HOST}" "chmod 600 '$PROD_DEPLOY_PATH/.env.production' '$PROD_DEPLOY_PATH'/infra/docker/secrets/*.txt"
+
+      - name: Deploy on server
+        env:
+          PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+          PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+          PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+          PROD_DEPLOY_PATH: ${{ vars.PROD_DEPLOY_PATH }}
+          RUN_SEED_ON_DEPLOY: ${{ github.event.inputs.run_seed || vars.RUN_SEED_ON_DEPLOY || 'false' }}
+        run: |
+          ssh -p "${PROD_SSH_PORT:-22}" "${PROD_SSH_USER}@${PROD_SSH_HOST}" "cd '$PROD_DEPLOY_PATH' && RUN_SEED_ON_DEPLOY='${RUN_SEED_ON_DEPLOY}' ./scripts/deploy-prod.sh '$PROD_DEPLOY_PATH'"

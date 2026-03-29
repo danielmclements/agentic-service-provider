@@ -6,6 +6,7 @@ type JwtPayload = Record<string, unknown> & {
   sub?: string;
   sid?: string;
   org_id?: string;
+  org_name?: string;
   iss?: string;
   aud?: string | string[];
   exp?: number;
@@ -15,6 +16,17 @@ type JwtPayload = Record<string, unknown> & {
   email?: string;
   name?: string;
 };
+
+type Jwk = {
+  kid?: string;
+  kty?: string;
+  n?: string;
+  e?: string;
+  x5c?: string[];
+};
+
+const JWKS_CACHE_TTL_MS = 5 * 60 * 1000;
+const jwksCache = new Map<string, { publicKey: string; expiresAt: number }>();
 
 const rolePermissions: Record<OperatorRole, OperatorPermission[]> = {
   tenant_viewer: ["tickets:read", "approvals:read", "audit:read"],
@@ -74,7 +86,58 @@ function verifyRs256(signingInput: string, signature: Buffer) {
   return crypto.verify("RSA-SHA256", Buffer.from(signingInput), env.AUTH0_JWT_PUBLIC_KEY, signature);
 }
 
-function validateTokenSignature(token: string) {
+function jwkToPublicKey(jwk: Jwk) {
+  if (jwk.x5c?.[0]) {
+    return `-----BEGIN CERTIFICATE-----\n${jwk.x5c[0]}\n-----END CERTIFICATE-----`;
+  }
+
+  if (jwk.kty === "RSA" && jwk.n && jwk.e) {
+    return crypto.createPublicKey({
+      key: {
+        kty: "RSA",
+        n: jwk.n,
+        e: jwk.e
+      },
+      format: "jwk"
+    }).export({ type: "spki", format: "pem" }).toString();
+  }
+
+  throw new Error("JWKS entry is missing a supported RSA public key");
+}
+
+async function getJwksPublicKey(kid: string) {
+  const cached = jwksCache.get(kid);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.publicKey;
+  }
+
+  const jwksUrl = env.AUTH0_JWKS_URL ?? `https://${env.AUTH0_DOMAIN}/.well-known/jwks.json`;
+  const response = await fetch(jwksUrl, {
+    headers: {
+      Accept: "application/json"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`JWKS fetch failed with status ${response.status}`);
+  }
+
+  const body = (await response.json()) as { keys?: Jwk[] };
+  const key = body.keys?.find((candidate) => candidate.kid === kid);
+  if (!key) {
+    throw new Error(`Unable to find JWKS key for kid ${kid}`);
+  }
+
+  const publicKey = jwkToPublicKey(key);
+  jwksCache.set(kid, {
+    publicKey,
+    expiresAt: Date.now() + JWKS_CACHE_TTL_MS
+  });
+
+  return publicKey;
+}
+
+async function validateTokenSignature(token: string) {
   const { header, payload, signature, signingInput } = parseJwt(token);
   const alg = String(header.alg ?? "");
   const allowed = env.AUTH0_JWT_ALGORITHMS.split(",").map((item) => item.trim()).filter(Boolean);
@@ -83,8 +146,18 @@ function validateTokenSignature(token: string) {
     throw new Error(`JWT algorithm ${alg} is not allowed`);
   }
 
-  const valid =
-    alg === "HS256" ? verifyHs256(signingInput, signature) : alg === "RS256" ? verifyRs256(signingInput, signature) : false;
+  let valid = false;
+  if (alg === "HS256") {
+    valid = verifyHs256(signingInput, signature);
+  } else if (alg === "RS256") {
+    const kid = typeof header.kid === "string" ? header.kid : undefined;
+    if (kid) {
+      const jwksPublicKey = await getJwksPublicKey(kid);
+      valid = crypto.verify("RSA-SHA256", Buffer.from(signingInput), jwksPublicKey, signature);
+    } else {
+      valid = verifyRs256(signingInput, signature);
+    }
+  }
 
   if (!valid) {
     throw new Error("Bearer token signature is invalid");
@@ -187,21 +260,31 @@ export function serializeCookie(name: string, value: string, options: { maxAge?:
 }
 
 export async function authenticateToken(token: string): Promise<AuthenticatedSession> {
-  const payload = validateTokenSignature(token);
+  const payload = await validateTokenSignature(token);
   const userId = typeof payload.sub === "string" ? payload.sub : undefined;
   const sessionId = typeof payload.sid === "string" ? payload.sid : undefined;
   const orgId = typeof payload.org_id === "string" ? payload.org_id : undefined;
+  const orgName = typeof payload.org_name === "string" ? payload.org_name : undefined;
   const roles = coerceRoles(payload[env.AUTH0_ROLES_CLAIM]);
   const claimedPermissions = coercePermissions(payload[env.AUTH0_PERMISSIONS_CLAIM]);
   const authTime = typeof payload.auth_time === "number" ? payload.auth_time : payload.iat ?? Math.floor(Date.now() / 1000);
   const amr = Array.isArray(payload.amr) ? payload.amr.filter((item): item is string => typeof item === "string") : [];
 
-  if (!userId || !sessionId || !orgId) {
-    throw new Error("Bearer token is missing required Auth0 claims");
+  if (!userId || !sessionId || (!orgId && !orgName)) {
+    throw new Error("Bearer token is missing required Auth0 organization claims");
   }
 
-  const authConnection = await prisma.tenantAuthConnection.findUnique({
-    where: { auth0OrganizationId: orgId },
+  const authConnectionWhere =
+    orgId && orgName
+      ? {
+          OR: [{ auth0OrganizationId: orgId }, { auth0OrganizationName: orgName }]
+        }
+      : orgId
+        ? { auth0OrganizationId: orgId }
+        : { auth0OrganizationName: orgName! };
+
+  const authConnection = await prisma.tenantAuthConnection.findFirst({
+    where: authConnectionWhere,
     include: { tenant: true }
   });
 
@@ -213,7 +296,6 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
     where: {
       tenantId: authConnection.tenantId,
       auth0UserId: userId,
-      auth0OrgId: orgId,
       active: true
     }
   });
@@ -244,7 +326,7 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
       tenantId: authConnection.tenantId,
       membershipId: membership.id,
       auth0UserId: userId,
-      auth0OrganizationId: orgId,
+      auth0OrganizationId: orgId ?? authConnection.auth0OrganizationId,
       sessionId,
       email: typeof payload.email === "string" ? payload.email : membership.email,
       displayName: typeof payload.name === "string" ? payload.name : membership.displayName,
@@ -271,7 +353,7 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
     email: typeof payload.email === "string" ? payload.email : membership.email ?? undefined,
     displayName: typeof payload.name === "string" ? payload.name : membership.displayName ?? undefined,
     sessionId,
-    auth0OrganizationId: orgId,
+    auth0OrganizationId: orgId ?? authConnection.auth0OrganizationId,
     tenantId: authConnection.tenantId,
     tenantSlug: authConnection.tenant.slug,
     tenantName: authConnection.tenant.name,
@@ -283,8 +365,8 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
   };
 }
 
-export function authenticateServiceToken(token: string): ServicePrincipalContext {
-  const payload = validateTokenSignature(token);
+export async function authenticateServiceToken(token: string): Promise<ServicePrincipalContext> {
+  const payload = await validateTokenSignature(token);
   const clientId = typeof payload.azp === "string" ? payload.azp : typeof payload.sub === "string" ? payload.sub : undefined;
   const tenantId = typeof payload[env.AUTH0_TENANT_CLAIM] === "string" ? (payload[env.AUTH0_TENANT_CLAIM] as string) : undefined;
   const permissions = coercePermissions(payload[env.AUTH0_PERMISSIONS_CLAIM]);

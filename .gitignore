@@ -3,7 +3,10 @@ node_modules
 dist
 .env
 .env.local
+.env.production
 coverage
 pnpm-lock.yaml
 prisma/dev.db
 prisma/dev.db-journal
+infra/docker/secrets/*
+!infra/docker/secrets/.gitkeep

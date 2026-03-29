@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { HelpdeskTriageAgent } from "./index";
+import { TenantContext } from "@asp/types";
+
+const verification: TenantContext["verification"] = {
+  requiredActions: ["RESET_PASSWORD", "ADD_TO_GROUP", "DISABLE_MFA"],
+  primaryMethod: "PUSH",
+  allowSmsFallback: false,
+  requireManualReviewOnMissingFactor: true,
+  challengeTtlMinutes: 10
+};
 
 describe("HelpdeskTriageAgent", () => {
   it("classifies lockout requests with heuristic fallback", async () => {
@@ -12,6 +21,7 @@ describe("HelpdeskTriageAgent", () => {
         ADD_TO_GROUP: "REQUIRES_APPROVAL"
       },
       identityProvider: "MOCK",
+      verification,
       model: {
         provider: "heuristic",
         modelName: "local"

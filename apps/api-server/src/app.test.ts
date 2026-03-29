@@ -78,7 +78,9 @@ const mocks = vi.hoisted(() => ({
       id: "approval-1",
       status: "APPROVED"
     },
-    workflowId: "ticket-ticket-1"
+    workflowId: "ticket-ticket-1",
+    ticketId: "ticket-1",
+    actionRequestId: "action-request-1"
   })),
   signalApprovalDecision: vi.fn(async () => undefined),
   signalVerificationDecision: vi.fn(async () => undefined),
@@ -420,6 +422,12 @@ describe("API server auth model", () => {
       approved: true,
       reviewerIdentity: "Alice Admin"
     });
+    expect(mocks.auditLog).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: "APPROVAL_DECIDED",
+      ticketId: "ticket-1",
+      actionRequestId: "action-request-1",
+      approvedBy: "Alice Admin"
+    }));
   });
 
   it("rejects service tokens that submit tickets for a different tenant than their claim", async () => {

@@ -101,7 +101,7 @@ async function authenticateApiCaller(req: express.Request, res: express.Response
       next();
       return;
     } catch (_operatorError) {
-      req.servicePrincipal = authenticateServiceToken(token);
+      req.servicePrincipal = await authenticateServiceToken(token);
       req.tenantId = await resolveTenantId(req.servicePrincipal.tenantId);
       next();
     }
@@ -188,12 +188,15 @@ export function createApp(): express.Express {
   const app = express();
   const operatorUiPath = path.resolve(process.cwd(), "apps/api-server/src/operator-ui");
 
+  app.set("trust proxy", env.TRUST_PROXY);
   app.use(express.json());
   app.use(httpLogger);
   app.use(
     rateLimit({
-      windowMs: 60 * 1000,
-      max: 60
+      windowMs: env.RATE_LIMIT_WINDOW_MS,
+      max: env.RATE_LIMIT_MAX,
+      standardHeaders: "draft-8",
+      legacyHeaders: false
     })
   );
 
@@ -431,8 +434,8 @@ export function createApp(): express.Express {
 
         await auditLogService.log({
           tenantId: req.tenantId!,
-          ticketId: undefined,
-          actionRequestId: undefined,
+          ticketId: result.ticketId,
+          actionRequestId: result.actionRequestId,
           eventType: "APPROVAL_DECIDED",
           actor: "operator",
           actorSubject: req.operatorSession?.userId,

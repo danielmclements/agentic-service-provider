@@ -1,8 +1,40 @@
 import { PrismaClient } from "@prisma/client";
 import { config as loadEnv } from "dotenv";
+import fs from "node:fs";
 import { z } from "zod";
 
 loadEnv();
+
+function readSecretFile(path: string | undefined) {
+  if (!path) {
+    return undefined;
+  }
+
+  return fs.readFileSync(path, "utf8").trim();
+}
+
+function resolveSecret(name: string) {
+  const inlineValue = process.env[name];
+  if (inlineValue) {
+    return inlineValue;
+  }
+
+  const fileValue = readSecretFile(process.env[`${name}_FILE`]);
+  if (fileValue) {
+    process.env[name] = fileValue;
+    return fileValue;
+  }
+
+  return undefined;
+}
+
+[
+  "DATABASE_URL",
+  "OPENAI_API_KEY",
+  "AUTH0_CLIENT_SECRET",
+  "AUTH0_JWT_SECRET",
+  "AUTH0_JWT_PUBLIC_KEY"
+].forEach(resolveSecret);
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -23,12 +55,16 @@ const envSchema = z.object({
   AUTH0_DEFAULT_ORGANIZATION: z.string().optional(),
   AUTH0_DEFAULT_CONNECTION: z.string().optional(),
   AUTH0_JWT_ALGORITHMS: z.string().default("HS256"),
+  AUTH0_JWKS_URL: z.string().url().optional(),
   AUTH0_JWT_SECRET: z.string().optional(),
   AUTH0_JWT_PUBLIC_KEY: z.string().optional(),
   AUTH0_PERMISSIONS_CLAIM: z.string().default("permissions"),
   AUTH0_ROLES_CLAIM: z.string().default("https://agentic-service-provider/roles"),
   AUTH0_TENANT_CLAIM: z.string().default("https://agentic-service-provider/tenant_id"),
   AUTH0_MFA_FRESHNESS_SECONDS: z.coerce.number().default(300),
+  TRUST_PROXY: z.string().default("loopback, linklocal, uniquelocal"),
+  RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60 * 1000),
+  RATE_LIMIT_MAX: z.coerce.number().default(60),
   SESSION_COOKIE_NAME: z.string().default("asp_operator_session"),
   AUTH_STATE_COOKIE_NAME: z.string().default("asp_auth_state"),
   AUTH_CODE_VERIFIER_COOKIE_NAME: z.string().default("asp_auth_code_verifier"),

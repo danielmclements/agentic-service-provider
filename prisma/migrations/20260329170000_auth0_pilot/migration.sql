@@ -47,6 +47,7 @@ CREATE TABLE "TenantAuthConnection" (
     "id" TEXT NOT NULL,
     "tenantId" TEXT NOT NULL,
     "auth0OrganizationId" TEXT NOT NULL,
+    "auth0OrganizationName" TEXT,
     "displayName" TEXT NOT NULL,
     "strategy" "AuthConnectionStrategy" NOT NULL,
     "connectionName" TEXT NOT NULL,
@@ -130,6 +131,9 @@ CREATE UNIQUE INDEX "TenantAuthConnection_auth0OrganizationId_key" ON "TenantAut
 
 -- CreateIndex
 CREATE INDEX "TenantAuthConnection_tenantId_isDefault_idx" ON "TenantAuthConnection"("tenantId", "isDefault");
+
+-- CreateIndex
+CREATE INDEX "TenantAuthConnection_auth0OrganizationName_idx" ON "TenantAuthConnection"("auth0OrganizationName");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "OperatorSession_sessionId_key" ON "OperatorSession"("sessionId");

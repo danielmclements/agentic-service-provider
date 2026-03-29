@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { PolicyEngineService } from "./index";
+import { TenantContext } from "@asp/types";
 
 const service = new PolicyEngineService();
+const verification: TenantContext["verification"] = {
+  requiredActions: ["RESET_PASSWORD", "ADD_TO_GROUP", "DISABLE_MFA"],
+  primaryMethod: "PUSH",
+  allowSmsFallback: false,
+  requireManualReviewOnMissingFactor: true,
+  challengeTtlMinutes: 10
+};
 
 describe("PolicyEngineService", () => {
   it("auto-executes low-risk allowed actions", () => {
@@ -11,6 +19,7 @@ describe("PolicyEngineService", () => {
       allowedActions: ["RESET_PASSWORD", "UNLOCK_ACCOUNT", "ADD_TO_GROUP"],
       approvalRules: {},
       identityProvider: "MOCK",
+      verification,
       model: {
         provider: "heuristic",
         modelName: "local"
@@ -30,6 +39,7 @@ describe("PolicyEngineService", () => {
       allowedActions: ["RESET_PASSWORD"],
       approvalRules: {},
       identityProvider: "MOCK",
+      verification,
       model: {
         provider: "heuristic",
         modelName: "local"

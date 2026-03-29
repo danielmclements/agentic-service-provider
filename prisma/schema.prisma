@@ -234,6 +234,7 @@ model TenantAuthConnection {
   id                  String                 @id @default(cuid())
   tenantId            String
   auth0OrganizationId String                 @unique
+  auth0OrganizationName String?
   displayName         String
   strategy            AuthConnectionStrategy
   connectionName      String
@@ -246,6 +247,7 @@ model TenantAuthConnection {
   tenant              Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, isDefault])
+  @@index([auth0OrganizationName])
 }
 
 model OperatorSession {

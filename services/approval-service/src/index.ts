@@ -1,5 +1,5 @@
 import { prisma } from "@asp/config";
-import { ApprovalDecisionInput } from "@asp/types";
+import { ApprovalDecisionInput, ApprovalDecisionResult } from "@asp/types";
 
 export class ApprovalService {
   async createPendingApproval(ticketId: string, actionRequestId: string) {
@@ -28,7 +28,7 @@ export class ApprovalService {
     });
   }
 
-  async applyDecision(approvalId: string, tenantId: string, input: ApprovalDecisionInput, reviewerIdentity?: string) {
+  async applyDecision(approvalId: string, tenantId: string, input: ApprovalDecisionInput, reviewerIdentity?: string): Promise<ApprovalDecisionResult> {
     const approval = await prisma.approval.findFirst({
       where: {
         id: approvalId,
@@ -79,7 +79,9 @@ export class ApprovalService {
 
       return {
         approval: updatedApproval,
-        workflowId: approval.ticket.executionRuns[0]?.workflowId ?? null
+        workflowId: approval.ticket.executionRuns[0]?.workflowId ?? null,
+        ticketId: approval.ticketId,
+        actionRequestId: approval.actionRequestId
       };
     });
   }

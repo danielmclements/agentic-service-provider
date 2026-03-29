@@ -71,6 +71,12 @@ The operator console is available at `http://localhost:4000/operator`.
 
 You can also open the API landing page at `http://localhost:4000/` to see the local endpoints.
 
+## Production / Pilot Deploy
+
+For a real-domain deployment on Docker with Caddy, Auth0 `RS256` + JWKS validation, file-backed secrets, Postgres backups, and hardened domain/callback settings, use:
+
+- [production-deploy.md](/Users/danielclements/Documents/DevProjects/agentic-service-provider/docs/production-deploy.md)
+
 ## Operator Console
 
 The fastest way to experience the MVP as a product is through the operator console:
@@ -109,7 +115,7 @@ pnpm dev:worker
 ## Default Local Auth Configuration
 
 - default tenant slug: `acme`
-- default Auth0 organization: `org_acme`
+- default Auth0 organization name: `acme`
 - local callback URL: `http://localhost:4000/auth/callback`
 - session cookie name: `asp_operator_session`
 - local JWT secret for dev tokens: `AUTH0_JWT_SECRET`
@@ -125,7 +131,7 @@ This prints an `HS256` token for the seeded Acme operator:
 - name: `Daniel Clements`
 - email: `daniel.clements@acme.com`
 - Auth0 subject: `auth0|daniel.clements`
-- Auth0 organization: `org_acme`
+- Auth0 organization name: `acme`
 
 Use it as:
 

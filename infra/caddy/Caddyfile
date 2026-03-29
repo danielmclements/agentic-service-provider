@@ -1,0 +1,33 @@
+{
+	email {$CADDY_EMAIL}
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		-Server
+	}
+}
+
+{$OPS_DOMAIN} {
+	import security_headers
+	encode zstd gzip
+	reverse_proxy api:4000
+}
+
+{$TEMPORAL_DOMAIN} {
+	import security_headers
+	@blocked not remote_ip {$TEMPORAL_ALLOWED_CIDRS}
+	respond @blocked 403
+	basic_auth {
+		{$TEMPORAL_BASICAUTH_USERNAME} {$TEMPORAL_BASICAUTH_PASSWORD_HASH}
+	}
+	reverse_proxy temporal-ui:8080
+}

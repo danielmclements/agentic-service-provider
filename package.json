@@ -26,6 +26,10 @@
     "infra:down": "docker compose -f infra/docker/docker-compose.yml down"
     ,"infra:logs": "docker compose -f infra/docker/docker-compose.yml logs -f api worker temporal postgres temporal-ui",
     "infra:ps": "docker compose -f infra/docker/docker-compose.yml ps",
+    "infra:prod:up": "docker compose --env-file .env.production -f infra/docker/docker-compose.prod.yml up -d --build",
+    "infra:prod:down": "docker compose --env-file .env.production -f infra/docker/docker-compose.prod.yml down",
+    "infra:prod:logs": "docker compose --env-file .env.production -f infra/docker/docker-compose.prod.yml logs -f caddy api worker postgres temporal temporal-ui backup",
+    "infra:prod:ps": "docker compose --env-file .env.production -f infra/docker/docker-compose.prod.yml ps",
     "bootstrap:local": "bash scripts/bootstrap-local.sh",
     "smoke:approval": "tsx scripts/smoke-approval.ts",
     "auth:token:daniel": "tsx scripts/print-dev-auth-token.ts",
