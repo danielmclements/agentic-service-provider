@@ -1,0 +1,9 @@
+node_modules
+.turbo
+dist
+.env
+.env.local
+coverage
+pnpm-lock.yaml
+prisma/dev.db
+prisma/dev.db-journal

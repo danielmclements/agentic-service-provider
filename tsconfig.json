@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "apps/**/*.ts",
+    "services/**/*.ts",
+    "agents/**/*.ts",
+    "integrations/**/*.ts",
+    "shared/**/*.ts",
+    "evals/**/*.ts",
+    "prisma/**/*.ts"
+  ]
+}

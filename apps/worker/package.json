@@ -1,0 +1,11 @@
+{
+  "name": "@asp/worker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs --dts --external @temporalio/worker --external @temporalio/workflow --external @temporalio/activity --external @swc/core --external @swc/wasm",
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest run --passWithNoTests",
+    "lint": "tsc --noEmit -p tsconfig.json"
+  }
+}

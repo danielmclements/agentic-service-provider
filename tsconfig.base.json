@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@asp/types": ["shared/types/src"],
+      "@asp/config": ["shared/config/src"],
+      "@asp/logger": ["shared/logger/src"],
+      "@asp/validation": ["shared/validation/src"],
+      "@asp/tenant-context": ["services/tenant-context/src"],
+      "@asp/policy-engine": ["services/policy-engine/src"],
+      "@asp/ticket-intake": ["services/ticket-intake/src"],
+      "@asp/approval-service": ["services/approval-service/src"],
+      "@asp/audit-log": ["services/audit-log/src"],
+      "@asp/orchestration": ["services/orchestration/src"],
+      "@asp/helpdesk-triage": ["agents/helpdesk-triage/src"],
+      "@asp/identity-ops": ["agents/identity-ops/src"],
+      "@asp/mock-identity": ["integrations/mock-identity/src"],
+      "@asp/m365": ["integrations/m365/src"]
+    }
+  }
+}

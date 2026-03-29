@@ -1,0 +1,170 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum IdentityProvider {
+  MOCK
+  M365
+}
+
+enum TicketStatus {
+  RECEIVED
+  TRIAGED
+  WAITING_APPROVAL
+  EXECUTING
+  RESOLVED
+  REJECTED
+  BLOCKED
+}
+
+enum ActionType {
+  RESET_PASSWORD
+  UNLOCK_ACCOUNT
+  ADD_TO_GROUP
+  DISABLE_MFA
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum PolicyDecision {
+  AUTO_EXECUTE
+  REQUIRES_APPROVAL
+  BLOCK
+}
+
+enum ActionStatus {
+  PENDING
+  WAITING_APPROVAL
+  APPROVED
+  REJECTED
+  BLOCKED
+  EXECUTING
+  SUCCEEDED
+  FAILED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ExecutionRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  WAITING_APPROVAL
+}
+
+model Tenant {
+  id               String           @id @default(cuid())
+  slug             String           @unique
+  name             String
+  identityProvider IdentityProvider
+  createdAt        DateTime         @default(now())
+  policy           TenantPolicy?
+  tickets          Ticket[]
+  auditLogs        AuditLog[]
+}
+
+model TenantPolicy {
+  id             String  @id @default(cuid())
+  tenantId       String  @unique
+  allowedActions Json
+  approvalRules  Json
+  modelSettings  Json
+  tenant         Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model Ticket {
+  id                String         @id @default(cuid())
+  tenantId          String
+  userEmail         String
+  message           String
+  normalizedMessage String
+  metadata          Json?
+  externalTicketRef String?
+  idempotencyKey    String?
+  status            TicketStatus   @default(RECEIVED)
+  triageCategory    String?
+  triageIntent      String?
+  triageConfidence  Float?
+  triageAction      ActionType?
+  triageRationale   String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  tenant            Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  actionRequests    ActionRequest[]
+  approvals         Approval[]
+  auditLogs         AuditLog[]
+  executionRuns     ExecutionRun[]
+
+  @@unique([tenantId, idempotencyKey])
+}
+
+model ActionRequest {
+  id             String         @id @default(cuid())
+  ticketId       String
+  actionType     ActionType
+  riskLevel      RiskLevel
+  policyDecision PolicyDecision
+  status         ActionStatus   @default(PENDING)
+  inputPayload   Json
+  outputPayload  Json?
+  errorMessage   String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  ticket         Ticket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  approval       Approval?
+  auditLogs      AuditLog[]
+}
+
+model Approval {
+  id               String         @id @default(cuid())
+  ticketId         String
+  actionRequestId  String         @unique
+  status           ApprovalStatus @default(PENDING)
+  reviewerIdentity String?
+  reviewerComment  String?
+  decidedAt        DateTime?
+  createdAt        DateTime       @default(now())
+  ticket           Ticket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actionRequest    ActionRequest  @relation(fields: [actionRequestId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id              String         @id @default(cuid())
+  tenantId        String
+  ticketId        String?
+  actionRequestId String?
+  eventType       String
+  actor           String
+  approvedBy      String?
+  payload         Json
+  createdAt       DateTime       @default(now())
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ticket          Ticket?        @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actionRequest   ActionRequest? @relation(fields: [actionRequestId], references: [id], onDelete: Cascade)
+}
+
+model ExecutionRun {
+  id          String             @id @default(cuid())
+  ticketId    String
+  workflowId  String             @unique
+  status      ExecutionRunStatus @default(PENDING)
+  currentStep String?
+  lastError   String?
+  startedAt   DateTime           @default(now())
+  completedAt DateTime?
+  ticket      Ticket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+}

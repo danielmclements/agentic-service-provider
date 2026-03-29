@@ -1,0 +1,7 @@
+packages:
+  - "apps/*"
+  - "services/*"
+  - "agents/*"
+  - "integrations/*"
+  - "shared/*"
+  - "evals"
