@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ACTION_TYPES, POLICY_DECISIONS } from "@asp/types";
+import { ACTION_TYPES, POLICY_DECISIONS, VERIFICATION_METHODS, VERIFICATION_STATUSES } from "@asp/types";
 
 export const ticketIntakeSchema = z.object({
   tenant_id: z.string().min(1),
@@ -11,7 +11,6 @@ export const ticketIntakeSchema = z.object({
 
 export const approvalDecisionSchema = z.object({
   decision: z.enum(["approve", "reject"]),
-  reviewerIdentity: z.string().min(1),
   comment: z.string().optional()
 });
 
@@ -24,3 +23,9 @@ export const triageSchema = z.object({
 });
 
 export const approvalRuleSchema = z.partialRecord(z.enum(ACTION_TYPES), z.enum(POLICY_DECISIONS));
+
+export const verificationDecisionSchema = z.object({
+  status: z.enum(["VERIFIED", "FAILED", "EXPIRED", "BYPASSED"]),
+  method: z.enum(VERIFICATION_METHODS).optional(),
+  evidencePayload: z.record(z.string(), z.unknown()).optional()
+});

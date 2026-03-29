@@ -20,6 +20,13 @@ export class TenantContextService {
       allowedActions: tenant.policy.allowedActions as TenantContext["allowedActions"],
       approvalRules: tenant.policy.approvalRules as TenantContext["approvalRules"],
       identityProvider: tenant.identityProvider,
+      verification: (tenant.policy.verificationSettings as TenantContext["verification"] | null) ?? {
+        requiredActions: ["RESET_PASSWORD", "ADD_TO_GROUP"],
+        primaryMethod: "PUSH",
+        allowSmsFallback: false,
+        requireManualReviewOnMissingFactor: true,
+        challengeTtlMinutes: 10
+      },
       model: tenant.policy.modelSettings as TenantContext["model"]
     };
   }

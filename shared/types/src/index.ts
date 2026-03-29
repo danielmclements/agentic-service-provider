@@ -16,6 +16,7 @@ export type PolicyDecision = (typeof POLICY_DECISIONS)[number];
 export const TICKET_STATUSES = [
   "RECEIVED",
   "TRIAGED",
+  "WAITING_VERIFICATION",
   "WAITING_APPROVAL",
   "EXECUTING",
   "RESOLVED",
@@ -26,6 +27,7 @@ export type TicketStatus = (typeof TICKET_STATUSES)[number];
 
 export const ACTION_STATUSES = [
   "PENDING",
+  "WAITING_VERIFICATION",
   "WAITING_APPROVAL",
   "APPROVED",
   "REJECTED",
@@ -39,11 +41,37 @@ export type ActionStatus = (typeof ACTION_STATUSES)[number];
 export const APPROVAL_STATUSES = ["PENDING", "APPROVED", "REJECTED"] as const;
 export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
 
-export const EXECUTION_RUN_STATUSES = ["PENDING", "RUNNING", "COMPLETED", "FAILED", "WAITING_APPROVAL"] as const;
+export const EXECUTION_RUN_STATUSES = ["PENDING", "RUNNING", "WAITING_VERIFICATION", "COMPLETED", "FAILED", "WAITING_APPROVAL"] as const;
 export type ExecutionRunStatus = (typeof EXECUTION_RUN_STATUSES)[number];
 
 export const IDENTITY_PROVIDERS = ["MOCK", "M365"] as const;
 export type IdentityProviderKind = (typeof IDENTITY_PROVIDERS)[number];
+
+export const OPERATOR_PERMISSIONS = [
+  "tickets:read",
+  "tickets:submit",
+  "approvals:read",
+  "approvals:decide",
+  "audit:read",
+  "connectors:admin",
+  "tenants:admin"
+] as const;
+export type OperatorPermission = (typeof OPERATOR_PERMISSIONS)[number];
+
+export const OPERATOR_ROLES = [
+  "tenant_viewer",
+  "tenant_operator",
+  "tenant_approver",
+  "tenant_admin",
+  "platform_admin"
+] as const;
+export type OperatorRole = (typeof OPERATOR_ROLES)[number];
+
+export const VERIFICATION_METHODS = ["PUSH", "WEBAUTHN", "SMS", "MANUAL_REVIEW"] as const;
+export type VerificationMethod = (typeof VERIFICATION_METHODS)[number];
+
+export const VERIFICATION_STATUSES = ["PENDING", "VERIFIED", "FAILED", "EXPIRED", "BYPASSED"] as const;
+export type VerificationStatus = (typeof VERIFICATION_STATUSES)[number];
 
 export interface TicketIntakeRequest {
   tenant_id: string;
@@ -59,6 +87,13 @@ export interface TenantContext {
   allowedActions: ActionType[];
   approvalRules: Partial<Record<ActionType, PolicyDecision>>;
   identityProvider: IdentityProviderKind;
+  verification: {
+    requiredActions: ActionType[];
+    primaryMethod: Extract<VerificationMethod, "PUSH" | "WEBAUTHN">;
+    allowSmsFallback: boolean;
+    requireManualReviewOnMissingFactor: boolean;
+    challengeTtlMinutes: number;
+  };
   model: {
     provider: "openai" | "heuristic";
     modelName: string;
@@ -83,7 +118,6 @@ export interface ExecutionCommand {
 
 export interface ApprovalDecisionInput {
   decision: "approve" | "reject";
-  reviewerIdentity: string;
   comment?: string;
 }
 
@@ -93,6 +127,10 @@ export interface AuditEvent {
   actionRequestId?: string;
   eventType: string;
   actor: "api" | "agent" | "system" | "operator";
+  actorSubject?: string;
+  actorOrgId?: string;
+  actorSessionId?: string;
+  actorDisplayName?: string;
   approvedBy?: string;
   payload: Record<string, unknown>;
 }
@@ -100,6 +138,39 @@ export interface AuditEvent {
 export interface WorkflowTicketPayload {
   ticketId: string;
   tenantId: string;
+}
+
+export interface VerificationChallengeView {
+  id: string;
+  method: VerificationMethod;
+  status: VerificationStatus;
+  targetReference: string;
+  issuedAt: string | Date;
+  expiresAt: string | Date;
+  completedAt?: string | Date | null;
+  attemptCount: number;
+}
+
+export interface AuthenticatedSession {
+  userId: string;
+  email?: string;
+  displayName?: string;
+  sessionId: string;
+  auth0OrganizationId: string;
+  tenantId: string;
+  tenantSlug: string;
+  tenantName: string;
+  roles: OperatorRole[];
+  permissions: OperatorPermission[];
+  authTime: number;
+  amr: string[];
+  mfaFreshUntil: number;
+}
+
+export interface ServicePrincipalContext {
+  clientId: string;
+  tenantId: string;
+  permissions: OperatorPermission[];
 }
 
 export interface TicketView {
@@ -122,6 +193,7 @@ export interface TicketView {
     reviewerIdentity?: string | null;
     reviewerComment?: string | null;
   } | null;
+  verification?: VerificationChallengeView | null;
   executionRun?: {
     workflowId: string;
     status: ExecutionRunStatus;

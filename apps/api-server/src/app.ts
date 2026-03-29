@@ -1,15 +1,18 @@
+import crypto from "node:crypto";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import path from "node:path";
+import { authenticateServiceToken, authenticateToken, buildAuthorizeUrl, createPkcePair, extractBearerToken, hasFreshMfa, hasPermission, parseCookieHeader, serializeCookie } from "@asp/auth";
 import { prisma, env } from "@asp/config";
 import { AuditLogService } from "@asp/audit-log";
 import { ApprovalService } from "@asp/approval-service";
 import { httpLogger } from "@asp/logger";
 import { OperatorInsightsService } from "@asp/operator-insights";
-import { startTicketWorkflow, signalApprovalDecision } from "@asp/orchestration";
+import { signalApprovalDecision, signalVerificationDecision, startTicketWorkflow } from "@asp/orchestration";
 import { TenantContextService } from "@asp/tenant-context";
 import { TicketIntakeService } from "@asp/ticket-intake";
-import { approvalDecisionSchema, ticketIntakeSchema } from "@asp/validation";
+import { approvalDecisionSchema, ticketIntakeSchema, verificationDecisionSchema } from "@asp/validation";
+import { AuthenticatedSession, OperatorPermission, ServicePrincipalContext } from "@asp/types";
 
 const ticketIntakeService = new TicketIntakeService();
 const tenantContextService = new TenantContextService();
@@ -22,40 +25,161 @@ async function resolveTenantId(tenantIdOrSlug: string) {
   return tenantContext.tenantId;
 }
 
-function requireApiKey(req: express.Request, res: express.Response, next: express.NextFunction) {
-  if (req.header("x-api-key") !== env.API_KEY) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-
-  next();
+function unauthorized(res: express.Response, message = "Unauthorized", extras?: Record<string, unknown>) {
+  res.status(401).json({
+    error: message,
+    ...(extras ?? {})
+  });
 }
 
-function requireOperatorKey(req: express.Request, res: express.Response, next: express.NextFunction) {
-  if (req.header("x-operator-key") !== env.OPERATOR_API_KEY) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-
-  next();
+function forbidden(res: express.Response, message = "Forbidden", extras?: Record<string, unknown>) {
+  res.status(403).json({
+    error: message,
+    ...(extras ?? {})
+  });
 }
 
-function requireTenantId(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const tenantId = req.header("x-tenant-id") ?? req.body?.tenant_id ?? req.query.tenantId;
+function getCookies(req: express.Request) {
+  return parseCookieHeader(req.header("cookie"));
+}
 
-  if (!tenantId || typeof tenantId !== "string") {
-    res.status(400).json({ error: "tenant_id is required" });
-    return;
+async function authenticateOperator(req: express.Request, res: express.Response, next: express.NextFunction) {
+  try {
+    const token = extractBearerToken(req.headers as Record<string, string | string[] | undefined>, getCookies(req));
+
+    if (!token) {
+      unauthorized(res, "Operator session required", { loginUrl: "/auth/login" });
+      return;
+    }
+
+    req.operatorSession = await authenticateToken(token);
+    req.tenantId = req.operatorSession.tenantId;
+    next();
+  } catch (error) {
+    unauthorized(res, error instanceof Error ? error.message : "Operator authentication failed", { loginUrl: "/auth/login" });
+  }
+}
+
+function requireOperatorPermission(permission: OperatorPermission, options?: { requireFreshMfa?: boolean }) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const session = req.operatorSession;
+
+    if (!session) {
+      unauthorized(res, "Operator session required", { loginUrl: "/auth/login" });
+      return;
+    }
+
+    if (!hasPermission(session, permission)) {
+      forbidden(res, `Missing permission ${permission}`);
+      return;
+    }
+
+    if (options?.requireFreshMfa && !hasFreshMfa(session)) {
+      forbidden(res, "Fresh MFA is required for this action", {
+        mfaRequired: true,
+        reauthenticateUrl: "/auth/login?prompt=login"
+      });
+      return;
+    }
+
+    next();
+  };
+}
+
+async function authenticateApiCaller(req: express.Request, res: express.Response, next: express.NextFunction) {
+  try {
+    const token = extractBearerToken(req.headers as Record<string, string | string[] | undefined>, getCookies(req));
+
+    if (!token) {
+      unauthorized(res, "Bearer token required");
+      return;
+    }
+
+    try {
+      req.operatorSession = await authenticateToken(token);
+      req.tenantId = req.operatorSession.tenantId;
+      next();
+      return;
+    } catch (_operatorError) {
+      req.servicePrincipal = authenticateServiceToken(token);
+      req.tenantId = await resolveTenantId(req.servicePrincipal.tenantId);
+      next();
+    }
+  } catch (error) {
+    unauthorized(res, error instanceof Error ? error.message : "API authentication failed");
+  }
+}
+
+function requireApiPermission(permission: OperatorPermission) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (req.operatorSession) {
+      if (!hasPermission(req.operatorSession, permission)) {
+        forbidden(res, `Missing permission ${permission}`);
+        return;
+      }
+
+      return next();
+    }
+
+    if (!req.servicePrincipal) {
+      unauthorized(res, "Authenticated caller required");
+      return;
+    }
+
+    if (!req.servicePrincipal.permissions.includes(permission)) {
+      forbidden(res, `Missing permission ${permission}`);
+      return;
+    }
+
+    next();
+  };
+}
+
+function createCodeVerifierCookie(value: string) {
+  return serializeCookie(env.AUTH_CODE_VERIFIER_COOKIE_NAME, value, { maxAge: 600 });
+}
+
+function createStateCookie(value: string) {
+  return serializeCookie(env.AUTH_STATE_COOKIE_NAME, value, { maxAge: 600 });
+}
+
+function createNonceCookie(value: string) {
+  return serializeCookie(env.AUTH_NONCE_COOKIE_NAME, value, { maxAge: 600 });
+}
+
+function clearCookie(name: string) {
+  return serializeCookie(name, "", { maxAge: 0 });
+}
+
+async function exchangeAuthorizationCode(code: string, codeVerifier: string) {
+  const response = await fetch(`https://${env.AUTH0_DOMAIN}/oauth/token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      grant_type: "authorization_code",
+      client_id: env.AUTH0_CLIENT_ID,
+      client_secret: env.AUTH0_CLIENT_SECRET,
+      code,
+      code_verifier: codeVerifier,
+      redirect_uri: env.AUTH0_CALLBACK_URL
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Token exchange failed with status ${response.status}`);
   }
 
-  req.tenantId = tenantId;
-  next();
+  return (await response.json()) as { access_token: string };
 }
 
 declare global {
   namespace Express {
     interface Request {
       tenantId?: string;
+      operatorSession?: AuthenticatedSession;
+      servicePrincipal?: ServicePrincipalContext;
     }
   }
 }
@@ -83,6 +207,84 @@ export function createApp(): express.Express {
     res.sendFile(path.join(operatorUiPath, "index.html"));
   });
 
+  app.get("/auth/login", (req, res) => {
+    const { codeVerifier, codeChallenge, state, nonce } = createPkcePair();
+    res.setHeader("Set-Cookie", [
+      createCodeVerifierCookie(codeVerifier),
+      createStateCookie(state),
+      createNonceCookie(nonce)
+    ]);
+
+    const prompt = typeof req.query.prompt === "string" ? req.query.prompt : undefined;
+    const organization = typeof req.query.organization === "string" ? req.query.organization : undefined;
+    res.redirect(buildAuthorizeUrl({ codeChallenge, state, nonce, organization, prompt }));
+  });
+
+  app.get("/auth/callback", async (req, res) => {
+    try {
+      const code = typeof req.query.code === "string" ? req.query.code : undefined;
+      const state = typeof req.query.state === "string" ? req.query.state : undefined;
+      const cookies = getCookies(req);
+
+      if (!code || !state || cookies[env.AUTH_STATE_COOKIE_NAME] !== state) {
+        unauthorized(res, "Auth callback state mismatch");
+        return;
+      }
+
+      const codeVerifier = cookies[env.AUTH_CODE_VERIFIER_COOKIE_NAME];
+      if (!codeVerifier) {
+        unauthorized(res, "Missing PKCE verifier");
+        return;
+      }
+
+      const tokenResponse = await exchangeAuthorizationCode(code, codeVerifier);
+      await authenticateToken(tokenResponse.access_token);
+
+      res.setHeader("Set-Cookie", [
+        serializeCookie(env.SESSION_COOKIE_NAME, tokenResponse.access_token, { maxAge: 60 * 60 * 8 }),
+        clearCookie(env.AUTH_CODE_VERIFIER_COOKIE_NAME),
+        clearCookie(env.AUTH_STATE_COOKIE_NAME),
+        clearCookie(env.AUTH_NONCE_COOKIE_NAME)
+      ]);
+      res.redirect("/operator");
+    } catch (error) {
+      unauthorized(res, error instanceof Error ? error.message : "Unable to complete auth callback");
+    }
+  });
+
+  app.post("/auth/logout", authenticateOperator, async (req, res) => {
+    await prisma.operatorSession.updateMany({
+      where: { sessionId: req.operatorSession!.sessionId },
+      data: { revokedAt: new Date() }
+    });
+
+    res.setHeader("Set-Cookie", clearCookie(env.SESSION_COOKIE_NAME));
+    res.json({
+      ok: true,
+      logoutUrl: `https://${env.AUTH0_DOMAIN}/v2/logout?client_id=${encodeURIComponent(env.AUTH0_CLIENT_ID)}&returnTo=${encodeURIComponent(
+        env.AUTH0_LOGOUT_URL
+      )}`
+    });
+  });
+
+  app.get("/api/session", async (req, res) => {
+    try {
+      const token = extractBearerToken(req.headers as Record<string, string | string[] | undefined>, getCookies(req));
+      if (!token) {
+        res.json({ authenticated: false, loginUrl: "/auth/login" });
+        return;
+      }
+
+      const session = await authenticateToken(token);
+      res.json({
+        authenticated: true,
+        session
+      });
+    } catch (_error) {
+      res.json({ authenticated: false, loginUrl: "/auth/login" });
+    }
+  });
+
   app.get("/", (_req, res) => {
     res.json({
       name: "Agentic Service Provider MVP",
@@ -90,24 +292,34 @@ export function createApp(): express.Express {
       docs: {
         health: "/health",
         operatorConsole: "/operator",
+        session: "/api/session",
         tickets: "/api/tickets",
         approvals: "/api/approvals",
         audit: "/api/audit/:ticketId",
         operatorSummary: "/api/operator-summary",
-        businessMetrics: "/api/business-metrics"
-      },
-      localDefaults: {
-        tenant: "acme",
-        apiKeyHeader: "x-api-key",
-        operatorKeyHeader: "x-operator-key"
+        businessMetrics: "/api/business-metrics",
+        authLogin: "/auth/login"
       }
     });
   });
 
-  app.post("/api/tickets", requireApiKey, requireTenantId, async (req, res) => {
+  app.post("/api/tickets", authenticateApiCaller, requireApiPermission("tickets:submit"), async (req, res) => {
     try {
       const input = ticketIntakeSchema.parse(req.body);
-      const tenantId = await resolveTenantId(input.tenant_id);
+      const tenantId = req.tenantId!;
+
+      if (req.operatorSession && input.tenant_id !== req.operatorSession.tenantId && input.tenant_id !== req.operatorSession.tenantSlug) {
+        forbidden(res, "Operator tenant does not match requested tenant");
+        return;
+      }
+
+      if (req.servicePrincipal) {
+        const claimedTenantId = await resolveTenantId(input.tenant_id);
+        if (claimedTenantId !== tenantId) {
+          forbidden(res, "Service token tenant does not match request tenant");
+          return;
+        }
+      }
 
       const idempotencyKey = req.header("idempotency-key") ?? undefined;
       const { ticket, executionRun, deduplicated } = await ticketIntakeService.createTicket(
@@ -146,10 +358,15 @@ export function createApp(): express.Express {
         tenantId: ticket.tenantId,
         ticketId: ticket.id,
         eventType: "TICKET_RECEIVED",
-        actor: "api",
+        actor: req.operatorSession ? "operator" : "api",
+        actorSubject: req.operatorSession?.userId,
+        actorOrgId: req.operatorSession?.auth0OrganizationId,
+        actorSessionId: req.operatorSession?.sessionId,
+        actorDisplayName: req.operatorSession?.displayName,
         payload: {
           userEmail: ticket.userEmail,
-          externalTicketRef: ticket.externalTicketRef ?? null
+          externalTicketRef: ticket.externalTicketRef ?? null,
+          authenticatedClientId: req.servicePrincipal?.clientId ?? null
         }
       });
 
@@ -165,16 +382,14 @@ export function createApp(): express.Express {
     }
   });
 
-  app.get("/api/tickets", requireApiKey, requireTenantId, async (req, res) => {
-    const tenantId = await resolveTenantId(req.tenantId!);
-    const tickets = await ticketIntakeService.listTickets(tenantId);
+  app.get("/api/tickets", authenticateOperator, requireOperatorPermission("tickets:read"), async (req, res) => {
+    const tickets = await ticketIntakeService.listTickets(req.tenantId!);
     res.json({ tickets });
   });
 
-  app.get("/api/tickets/:id", requireApiKey, requireTenantId, async (req, res) => {
+  app.get("/api/tickets/:id", authenticateOperator, requireOperatorPermission("tickets:read"), async (req, res) => {
     const ticketId = String(req.params.id);
-    const tenantId = await resolveTenantId(req.tenantId!);
-    const ticket = await ticketIntakeService.getTicketView(ticketId, tenantId);
+    const ticket = await ticketIntakeService.getTicketView(ticketId, req.tenantId!);
 
     if (!ticket) {
       res.status(404).json({ error: "Ticket not found" });
@@ -184,66 +399,134 @@ export function createApp(): express.Express {
     res.json({ ticket });
   });
 
-  app.get("/api/approvals", requireOperatorKey, requireTenantId, async (req, res) => {
+  app.get("/api/approvals", authenticateOperator, requireOperatorPermission("approvals:read"), async (req, res) => {
     const status = typeof req.query.status === "string" ? (req.query.status as "PENDING" | "APPROVED" | "REJECTED") : undefined;
-    const tenantId = await resolveTenantId(req.tenantId!);
-    const approvals = await approvalService.listApprovals(tenantId, status);
+    const approvals = await approvalService.listApprovals(req.tenantId!, status);
     res.json({ approvals });
   });
 
-  app.get("/api/operator-summary", requireOperatorKey, requireTenantId, async (req, res) => {
-    const tenantId = await resolveTenantId(req.tenantId!);
-    const summary = await operatorInsightsService.getOperatorSummary(tenantId);
+  app.get("/api/operator-summary", authenticateOperator, requireOperatorPermission("tickets:read"), async (req, res) => {
+    const summary = await operatorInsightsService.getOperatorSummary(req.tenantId!);
     res.json(summary);
   });
 
-  app.get("/api/business-metrics", requireOperatorKey, requireTenantId, async (req, res) => {
-    const tenantId = await resolveTenantId(req.tenantId!);
-    const metrics = await operatorInsightsService.getBusinessMetrics(tenantId);
+  app.get("/api/business-metrics", authenticateOperator, requireOperatorPermission("tickets:read"), async (req, res) => {
+    const metrics = await operatorInsightsService.getBusinessMetrics(req.tenantId!);
     res.json(metrics);
   });
 
-  app.post("/api/approvals/:id/decision", requireOperatorKey, requireTenantId, async (req, res) => {
-    try {
-      const approvalId = String(req.params.id);
-      const tenantId = await resolveTenantId(req.tenantId!);
-      const input = approvalDecisionSchema.parse(req.body);
-      const result = await approvalService.applyDecision(approvalId, tenantId, input);
-
-      await auditLogService.log({
-        tenantId,
-        ticketId: undefined,
-        actionRequestId: undefined,
-        eventType: "APPROVAL_DECIDED",
-        actor: "operator",
-        approvedBy: input.reviewerIdentity,
-        payload: {
-          approvalId: req.params.id,
+  app.post(
+    "/api/approvals/:id/decision",
+    authenticateOperator,
+    requireOperatorPermission("approvals:decide", { requireFreshMfa: true }),
+    async (req, res) => {
+      try {
+        const approvalId = String(req.params.id);
+        const input = approvalDecisionSchema.parse(req.body);
+        const reviewerIdentity = req.operatorSession?.displayName ?? req.operatorSession?.email ?? req.operatorSession!.userId;
+        const result = await approvalService.applyDecision(approvalId, req.tenantId!, {
           decision: input.decision,
-          comment: input.comment ?? null
+          comment: input.comment
+        }, reviewerIdentity);
+
+        await auditLogService.log({
+          tenantId: req.tenantId!,
+          ticketId: undefined,
+          actionRequestId: undefined,
+          eventType: "APPROVAL_DECIDED",
+          actor: "operator",
+          actorSubject: req.operatorSession?.userId,
+          actorOrgId: req.operatorSession?.auth0OrganizationId,
+          actorSessionId: req.operatorSession?.sessionId,
+          actorDisplayName: req.operatorSession?.displayName,
+          approvedBy: reviewerIdentity,
+          payload: {
+            approvalId: req.params.id,
+            decision: input.decision,
+            comment: input.comment ?? null,
+            assurance: {
+              amr: req.operatorSession?.amr ?? [],
+              freshUntil: req.operatorSession?.mfaFreshUntil ?? 0
+            }
+          }
+        });
+
+        if (result.workflowId) {
+          await signalApprovalDecision(result.workflowId, {
+            approved: input.decision === "approve",
+            reviewerIdentity
+          });
+        }
+
+        res.json({ approval: result.approval });
+      } catch (error) {
+        res.status(400).json({
+          error: error instanceof Error ? error.message : "Unable to apply decision"
+        });
+      }
+    }
+  );
+
+  app.post("/api/verifications/:actionRequestId/complete", authenticateApiCaller, requireApiPermission("tickets:submit"), async (req, res) => {
+    try {
+      const actionRequestId = String(req.params.actionRequestId);
+      const input = verificationDecisionSchema.parse(req.body);
+      const actionRequest = await prisma.actionRequest.findUnique({
+        where: { id: actionRequestId },
+        include: {
+          ticket: {
+            include: {
+              executionRuns: true
+            }
+          }
         }
       });
 
-      if (result.workflowId) {
-        await signalApprovalDecision(result.workflowId, {
-          approved: input.decision === "approve",
-          reviewerIdentity: input.reviewerIdentity,
-          comment: input.comment
-        });
+      if (!actionRequest || actionRequest.ticket.tenantId !== req.tenantId) {
+        res.status(404).json({ error: "Verification challenge not found" });
+        return;
       }
 
-      res.json({ approval: result.approval });
+      const workflowId = actionRequest.ticket.executionRuns[0]?.workflowId;
+      if (!workflowId) {
+        res.status(400).json({ error: "No workflow is associated with this verification challenge" });
+        return;
+      }
+
+      await signalVerificationDecision(workflowId, {
+        status: input.status,
+        evidencePayload: input.evidencePayload
+      });
+
+      await auditLogService.log({
+        tenantId: req.tenantId!,
+        ticketId: actionRequest.ticketId,
+        actionRequestId,
+        eventType: "VERIFICATION_SIGNALLED",
+        actor: req.operatorSession ? "operator" : "api",
+        actorSubject: req.operatorSession?.userId,
+        actorOrgId: req.operatorSession?.auth0OrganizationId,
+        actorSessionId: req.operatorSession?.sessionId,
+        actorDisplayName: req.operatorSession?.displayName,
+        payload: {
+          status: input.status,
+          method: input.method ?? null,
+          evidencePayload: input.evidencePayload ?? {},
+          authenticatedClientId: req.servicePrincipal?.clientId ?? null
+        }
+      });
+
+      res.json({ ok: true });
     } catch (error) {
       res.status(400).json({
-        error: error instanceof Error ? error.message : "Unable to apply decision"
+        error: error instanceof Error ? error.message : "Unable to complete verification challenge"
       });
     }
   });
 
-  app.get("/api/audit/:ticketId", requireApiKey, requireTenantId, async (req, res) => {
+  app.get("/api/audit/:ticketId", authenticateOperator, requireOperatorPermission("audit:read"), async (req, res) => {
     const ticketId = String(req.params.ticketId);
-    const tenantId = await resolveTenantId(req.tenantId!);
-    const events = await auditLogService.getTicketAuditTrail(ticketId, tenantId);
+    const events = await auditLogService.getTicketAuditTrail(ticketId, req.tenantId!);
     res.json({ events });
   });
 

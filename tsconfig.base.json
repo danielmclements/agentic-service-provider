@@ -14,6 +14,7 @@
     "baseUrl": ".",
     "paths": {
       "@asp/types": ["shared/types/src"],
+      "@asp/auth": ["shared/auth/src"],
       "@asp/config": ["shared/config/src"],
       "@asp/logger": ["shared/logger/src"],
       "@asp/validation": ["shared/validation/src"],
@@ -23,6 +24,7 @@
       "@asp/approval-service": ["services/approval-service/src"],
       "@asp/operator-insights": ["services/operator-insights/src"],
       "@asp/audit-log": ["services/audit-log/src"],
+      "@asp/user-verification": ["services/user-verification/src"],
       "@asp/orchestration": ["services/orchestration/src"],
       "@asp/helpdesk-triage": ["agents/helpdesk-triage/src"],
       "@asp/identity-ops": ["agents/identity-ops/src"],

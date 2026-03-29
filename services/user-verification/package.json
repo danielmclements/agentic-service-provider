@@ -1,0 +1,12 @@
+{
+  "name": "@asp/user-verification",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs --dts",
+    "test": "vitest run --passWithNoTests",
+    "lint": "tsc --noEmit -p tsconfig.json"
+  }
+}

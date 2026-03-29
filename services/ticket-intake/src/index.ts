@@ -54,7 +54,12 @@ export class TicketIntakeService {
     return prisma.ticket.findMany({
       where: { tenantId },
       include: {
-        actionRequests: true,
+        actionRequests: {
+          include: {
+            verificationChallenge: true,
+            approval: true
+          }
+        },
         approvals: true,
         executionRuns: true
       },
@@ -68,7 +73,8 @@ export class TicketIntakeService {
       include: {
         actionRequests: {
           include: {
-            approval: true
+            approval: true,
+            verificationChallenge: true
           }
         },
         executionRuns: true

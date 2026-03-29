@@ -27,7 +27,9 @@
     ,"infra:logs": "docker compose -f infra/docker/docker-compose.yml logs -f api worker temporal postgres temporal-ui",
     "infra:ps": "docker compose -f infra/docker/docker-compose.yml ps",
     "bootstrap:local": "bash scripts/bootstrap-local.sh",
-    "smoke:approval": "tsx scripts/smoke-approval.ts"
+    "smoke:approval": "tsx scripts/smoke-approval.ts",
+    "auth:token:daniel": "tsx scripts/print-dev-auth-token.ts",
+    "auth:token:operator": "tsx scripts/print-dev-auth-token.ts"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
