@@ -82,7 +82,8 @@ body::before {
 .sidebar-card,
 .topbar,
 .surface,
-.metric-strip {
+.metric-strip,
+.workspace-pulse {
   background: var(--surface);
   border: 1px solid rgba(255, 255, 255, 0.85);
   box-shadow: var(--shadow-lg);
@@ -121,7 +122,8 @@ body::before {
 .sidebar-card,
 .topbar,
 .surface,
-.metric-strip {
+.metric-strip,
+.workspace-pulse {
   padding: 20px;
 }
 
@@ -200,12 +202,108 @@ body::before {
   border-radius: var(--radius-xl);
 }
 
+.workspace-pulse {
+  border-radius: var(--radius-xl);
+}
+
+.auth-banner {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+  padding: 18px 20px;
+  border-radius: var(--radius-xl);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(14px);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(246, 250, 255, 0.96));
+}
+
+.auth-banner-success {
+  border-color: rgba(18, 128, 92, 0.14);
+}
+
+.auth-banner-warning {
+  border-color: rgba(181, 106, 20, 0.18);
+}
+
+.auth-banner-copy {
+  min-width: 0;
+}
+
+.auth-banner-title,
+.status-title,
+.callout-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.auth-banner-text,
+.status-copy,
+.callout-copy,
+.inline-note,
+.approval-comment {
+  margin: 6px 0 0;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.auth-banner-meta,
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .metric-strip-grid,
 .mini-metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   min-width: 0;
+}
+
+.pulse-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pulse-card {
+  padding: 16px 18px;
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 255, 0.94)),
+    linear-gradient(135deg, rgba(49, 108, 255, 0.06), transparent);
+  border: 1px solid rgba(49, 108, 255, 0.08);
+  box-shadow: var(--shadow-md);
+}
+
+.pulse-label,
+.insight-label {
+  margin: 0 0 8px;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.pulse-value {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.45rem;
+  letter-spacing: -0.04em;
+}
+
+.pulse-subtext {
+  margin: 8px 0 0;
+  color: var(--ink-soft);
+  line-height: 1.45;
+  font-size: 0.92rem;
 }
 
 .metric-card,
@@ -222,6 +320,17 @@ body::before {
 
 .metric-card {
   padding: 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+.metric-card::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 3px;
+  background: linear-gradient(90deg, var(--accent), rgba(107, 92, 255, 0.7));
 }
 
 .metric-label {
@@ -348,6 +457,13 @@ body::before {
   font-weight: 600;
 }
 
+.inline-note {
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: rgba(49, 108, 255, 0.06);
+  border: 1px solid rgba(49, 108, 255, 0.1);
+}
+
 input,
 textarea {
   width: 100%;
@@ -386,6 +502,14 @@ textarea:focus {
 
 .button:hover {
   transform: translateY(-1px);
+}
+
+.button:disabled,
+.button[disabled] {
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+  opacity: 0.54;
 }
 
 .button-primary {
@@ -466,6 +590,17 @@ textarea:focus {
   min-width: 0;
 }
 
+.approval-card,
+.ticket-card {
+  padding: 18px;
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 255, 0.96)),
+    linear-gradient(135deg, rgba(49, 108, 255, 0.05), transparent);
+  border: 1px solid rgba(49, 108, 255, 0.08);
+  box-shadow: var(--shadow-md);
+}
+
 .card-topline,
 .ticket-badges,
 .timeline-meta {
@@ -479,6 +614,28 @@ textarea:focus {
   margin: 10px 0 6px;
   font-size: 1.04rem;
   font-family: var(--font-display);
+}
+
+.ticket-insights {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.insight-pill {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(18, 32, 51, 0.03);
+  border: 1px solid rgba(18, 32, 51, 0.06);
+}
+
+.insight-value {
+  display: block;
+  color: var(--ink);
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .ticket-message,
@@ -523,6 +680,46 @@ textarea:focus {
 .badge-signal {
   background: rgba(107, 92, 255, 0.12);
   color: var(--signal);
+}
+
+.status-panel {
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+}
+
+.status-panel-success {
+  border-color: rgba(18, 128, 92, 0.15);
+  background: rgba(18, 128, 92, 0.06);
+}
+
+.status-panel-warning {
+  border-color: rgba(181, 106, 20, 0.16);
+  background: rgba(181, 106, 20, 0.08);
+}
+
+.callout {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+}
+
+.callout-warning {
+  border-color: rgba(181, 106, 20, 0.18);
+  background: rgba(181, 106, 20, 0.08);
+}
+
+.callout-danger {
+  border-color: rgba(194, 60, 60, 0.18);
+  background: rgba(194, 60, 60, 0.08);
+}
+
+.callout-neutral {
+  border-color: rgba(18, 32, 51, 0.1);
+  background: rgba(18, 32, 51, 0.04);
 }
 
 .detail-grid {
@@ -592,6 +789,7 @@ textarea:focus {
     grid-template-columns: 300px minmax(0, 1fr);
   }
 
+  .pulse-grid,
   .metric-strip-grid,
   .mini-metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -621,6 +819,11 @@ textarea:focus {
   .topbar-actions {
     justify-content: flex-start;
   }
+
+  .auth-banner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
 @media (max-width: 1180px) {
@@ -632,6 +835,7 @@ textarea:focus {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .pulse-grid,
   .metric-strip-grid,
   .mini-metric-grid,
   .content-grid,
@@ -642,6 +846,10 @@ textarea:focus {
   .surface-wide {
     grid-column: auto;
   }
+
+  .ticket-insights {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
@@ -650,6 +858,7 @@ textarea:focus {
   }
 
   .sidebar,
+  .pulse-grid,
   .metric-strip-grid,
   .mini-metric-grid,
   .content-grid,
@@ -680,5 +889,9 @@ textarea:focus {
   .tab-list {
     width: 100%;
     overflow-x: auto;
+  }
+
+  .auth-banner-meta {
+    width: 100%;
   }
 }

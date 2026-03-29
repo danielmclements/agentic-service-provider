@@ -11,14 +11,27 @@
     session: null
   };
 
+  const permissionLabels = {
+    "tickets:read": "Ticket Read",
+    "tickets:submit": "Ticket Submit",
+    "approvals:read": "Approval Read",
+    "approvals:decide": "Approval Decide",
+    "audit:read": "Audit Read",
+    "connectors:admin": "Connector Admin",
+    "tenants:admin": "Tenant Admin"
+  };
+
   const els = {
     ticketForm: document.getElementById("ticket-form"),
+    submitTicketButton: document.getElementById("submit-ticket-button"),
+    composePermissionNote: document.getElementById("compose-permission-note"),
     refreshButton: document.getElementById("refresh-button"),
     logoutButton: document.getElementById("logout-button"),
     loginLink: document.getElementById("login-link"),
     ticketMessage: document.getElementById("ticket-message"),
     ticketEmail: document.getElementById("ticket-email"),
     ticketResult: document.getElementById("ticket-result"),
+    pulseGrid: document.getElementById("pulse-grid"),
     metricsGrid: document.getElementById("metrics-grid"),
     roiGrid: document.getElementById("roi-grid"),
     businessNarrative: document.getElementById("business-narrative"),
@@ -34,7 +47,10 @@
     sessionUser: document.getElementById("session-user"),
     sessionTenant: document.getElementById("session-tenant"),
     sessionPermissions: document.getElementById("session-permissions"),
+    sessionRoles: document.getElementById("session-roles"),
     sessionMfa: document.getElementById("session-mfa"),
+    sessionAssurance: document.getElementById("session-assurance"),
+    authBanner: document.getElementById("auth-banner"),
     queueBadge: document.getElementById("queue-badge"),
     tabButtons: Array.from(document.querySelectorAll("[data-tab]")),
     tabPanels: Array.from(document.querySelectorAll("[data-panel]"))
@@ -73,6 +89,125 @@
     return `<span class="badge ${className}">${text}</span>`;
   }
 
+  function hasPermission(permission) {
+    return Boolean(state.session && Array.isArray(state.session.permissions) && state.session.permissions.includes(permission));
+  }
+
+  function isMfaFresh() {
+    return Boolean(state.session && state.session.amr.includes("mfa") && state.session.mfaFreshUntil * 1000 > Date.now());
+  }
+
+  function formatPermission(permission) {
+    return permissionLabels[permission] || permission;
+  }
+
+  function chipList(values, options) {
+    if (!values || !values.length) {
+      return `<span class="badge badge-neutral">${options.emptyLabel}</span>`;
+    }
+
+    return values
+      .map((value) => `<span class="badge ${options.className || "badge-neutral"}">${options.mapValue ? options.mapValue(value) : value}</span>`)
+      .join("");
+  }
+
+  function callout(type, title, body) {
+    return `
+      <div class="callout callout-${type}">
+        <p class="callout-title">${title}</p>
+        <p class="callout-copy">${body}</p>
+      </div>
+    `;
+  }
+
+  function setAuthBanner(type, title, text, chips) {
+    els.authBanner.className = `auth-banner auth-banner-${type}`;
+    els.authBanner.innerHTML = `
+      <div class="auth-banner-copy">
+        <p class="auth-banner-title">${title}</p>
+        <p class="auth-banner-text">${text}</p>
+      </div>
+      <div class="auth-banner-meta">${chips || ""}</div>
+    `;
+  }
+
+  function renderSessionState(authenticated) {
+    if (!authenticated) {
+      els.sessionUser.textContent = "Not signed in";
+      els.sessionTenant.textContent = "Sign in required";
+      els.sessionRoles.innerHTML = chipList([], { emptyLabel: "No roles" });
+      els.sessionPermissions.innerHTML = chipList([], { emptyLabel: "No permissions" });
+      els.sessionMfa.textContent = "No session";
+      els.sessionAssurance.className = "status-panel status-panel-warning";
+      els.sessionAssurance.innerHTML = `
+        <p class="status-title">Authentication required</p>
+        <p class="status-copy">Sign in with Auth0 to load your tenant, policies, and operator actions.</p>
+      `;
+      els.composePermissionNote.textContent = "Sign in to submit tickets or review the operator queue.";
+      els.submitTicketButton.disabled = true;
+      setAuthBanner("warning", "Sign in to open the control plane", "The console is ready, but live tenant data and protected actions require an authenticated operator session.");
+    }
+  }
+
+  function renderAuthenticatedSession(session) {
+    const freshMfa = isMfaFresh();
+    const authChips = [
+      `<span class="badge badge-signal">${session.tenantSlug}</span>`,
+      `<span class="badge ${freshMfa ? "badge-success" : "badge-warning"}">${freshMfa ? "Fresh MFA" : "Step-up needed"}</span>`,
+      `<span class="badge badge-neutral">${session.roles.length} role${session.roles.length === 1 ? "" : "s"}</span>`
+    ].join("");
+
+    els.sessionUser.textContent = session.displayName || session.email || session.userId;
+    els.sessionTenant.textContent = `${session.tenantName} (${session.tenantSlug})`;
+    els.sessionRoles.innerHTML = chipList(session.roles, { emptyLabel: "No roles", className: "badge-signal" });
+    els.sessionPermissions.innerHTML = chipList(session.permissions, {
+      emptyLabel: "No permissions",
+      className: "badge-neutral",
+      mapValue: formatPermission
+    });
+    els.sessionMfa.textContent = session.amr.includes("mfa")
+      ? `${freshMfa ? "Fresh through" : "Expired at"} ${formatDate(session.mfaFreshUntil * 1000)}`
+      : "No MFA claim present";
+    els.sessionAssurance.className = `status-panel ${freshMfa ? "status-panel-success" : "status-panel-warning"}`;
+    els.sessionAssurance.innerHTML = `
+      <p class="status-title">${freshMfa ? "Approval-ready session" : "Approval step-up required"}</p>
+      <p class="status-copy">${
+        freshMfa
+          ? "This operator session can make approval decisions without re-authenticating."
+          : "Read access is live, but approval decisions will prompt for fresh MFA before they can continue."
+      }</p>
+    `;
+
+    const bannerCopy = hasPermission("approvals:decide")
+      ? freshMfa
+        ? "This operator can submit tickets, inspect governance data, and decide approvals in the current session."
+        : "This operator can review work now, but approval decisions will require a fresh MFA step-up."
+      : "This operator can monitor the queue and governance state, but approval actions are not available in this role.";
+
+    setAuthBanner("success", `Signed in as ${session.displayName || session.email || session.userId}`, bannerCopy, authChips);
+  }
+
+  function updateActionAvailability() {
+    const canSubmitTickets = hasPermission("tickets:submit");
+    const canDecideApprovals = hasPermission("approvals:decide");
+    const canReadAudit = hasPermission("audit:read");
+    const governanceTab = els.tabButtons.find((button) => button.getAttribute("data-tab") === "governance");
+
+    els.submitTicketButton.disabled = !canSubmitTickets;
+    els.ticketEmail.disabled = !canSubmitTickets;
+    els.ticketMessage.disabled = !canSubmitTickets;
+    els.composePermissionNote.textContent = canSubmitTickets
+      ? "Ticket intake is enabled for this tenant-scoped operator session."
+      : "This session can observe the queue but cannot submit new tickets.";
+
+    if (governanceTab) {
+      governanceTab.disabled = !canReadAudit;
+      governanceTab.title = canReadAudit ? "" : "Audit access is not available for this session.";
+    }
+
+    return { canSubmitTickets, canDecideApprovals, canReadAudit };
+  }
+
   async function apiFetch(path, options) {
     const response = await fetch(path, {
       credentials: "same-origin",
@@ -109,10 +244,8 @@
     const data = await apiFetch("/api/session");
 
     if (!data.authenticated) {
-      els.sessionUser.textContent = "Not signed in";
-      els.sessionTenant.textContent = "Sign in required";
-      els.sessionPermissions.textContent = "No session";
-      els.sessionMfa.textContent = "No session";
+      state.session = null;
+      renderSessionState(false);
       els.loginLink.hidden = false;
       els.logoutButton.hidden = true;
       if (data.loginUrl) {
@@ -124,12 +257,8 @@
     state.session = data.session;
     els.loginLink.hidden = true;
     els.logoutButton.hidden = false;
-    els.sessionUser.textContent = data.session.displayName || data.session.email || data.session.userId;
-    els.sessionTenant.textContent = `${data.session.tenantName} (${data.session.tenantSlug})`;
-    els.sessionPermissions.textContent = data.session.permissions.join(", ");
-    els.sessionMfa.textContent = data.session.amr.includes("mfa")
-      ? `Fresh until ${formatDate(data.session.mfaFreshUntil * 1000)}`
-      : "No MFA claim present";
+    renderAuthenticatedSession(data.session);
+    updateActionAvailability();
 
     return data.session;
   }
@@ -227,7 +356,48 @@
       .join("");
   }
 
+  function renderPulse(summary, metrics) {
+    const cards = [
+      {
+        label: "Queue Health",
+        value: summary.totals.pendingApprovals ? `${summary.totals.pendingApprovals} pending` : "Clear",
+        subtext: summary.totals.pendingApprovals
+          ? `${summary.totals.waitingApproval} tickets are paused behind operator review.`
+          : "No approvals are currently waiting on a human decision."
+      },
+      {
+        label: "Automation Coverage",
+        value: `${metrics.automation.automationRatePct}%`,
+        subtext: `${metrics.automation.autoExecuted} requests resolved without operator intervention.`
+      },
+      {
+        label: "Risk Controls",
+        value: `${metrics.automation.blockedRatePct}% blocked`,
+        subtext: `${summary.totals.blocked} tickets were stopped by policy before execution.`
+      },
+      {
+        label: "Resolution Tempo",
+        value: `${metrics.operations.avgResolutionSeconds}s`,
+        subtext: `${metrics.outcomes.successRatePct}% success across action requests.`
+      }
+    ];
+
+    els.pulseGrid.innerHTML = cards
+      .map(
+        (card) => `
+          <article class="pulse-card">
+            <p class="pulse-label">${card.label}</p>
+            <p class="pulse-value">${card.value}</p>
+            <p class="pulse-subtext">${card.subtext}</p>
+          </article>
+        `
+      )
+      .join("");
+  }
+
   function renderApprovals(approvals) {
+    const canDecideApprovals = hasPermission("approvals:decide");
+    const freshMfa = isMfaFresh();
     els.queueBadge.textContent = String(approvals.length);
 
     if (!approvals.length) {
@@ -250,10 +420,22 @@
             <p class="ticket-message">${approval.message}</p>
             <p class="approval-comment">Created ${formatDate(approval.createdAt)} • Queue age ${approval.queueAgeSeconds}s</p>
             <p class="approval-comment">Reasoning: ${approval.triageRationale || "No rationale recorded."}</p>
+            ${
+              approval.verificationStatus === "PENDING"
+                ? callout("warning", "Verification still pending", "The workflow is waiting on end-user verification before an operator decision can safely move it forward.")
+                : ""
+            }
+            ${
+              !canDecideApprovals
+                ? callout("neutral", "Decision permission not assigned", "This session can review the queue, but approval actions are reserved for approver-capable roles.")
+                : !freshMfa
+                  ? callout("warning", "Fresh MFA required", "Approving or rejecting will trigger a step-up flow so the audit trail shows recent strong assurance.")
+                  : ""
+            }
             <div class="approval-actions">
-              <button class="button button-approve" type="button" data-approval-id="${approval.id}" data-decision="approve">Approve</button>
-              <button class="button button-reject" type="button" data-approval-id="${approval.id}" data-decision="reject">Reject</button>
-              <button class="button button-ghost" type="button" data-ticket-id="${approval.ticketId}">View Audit</button>
+              <button class="button button-approve" type="button" data-approval-id="${approval.id}" data-decision="approve" ${!canDecideApprovals ? "disabled" : ""}>Approve</button>
+              <button class="button button-reject" type="button" data-approval-id="${approval.id}" data-decision="reject" ${!canDecideApprovals ? "disabled" : ""}>Reject</button>
+              <button class="button button-ghost" type="button" data-ticket-id="${approval.ticketId}">Inspect Flow</button>
             </div>
           </article>
         `
@@ -262,6 +444,8 @@
   }
 
   function renderTickets(tickets) {
+    const canReadAudit = hasPermission("audit:read");
+
     if (!tickets.length) {
       els.ticketsList.innerHTML = `<div class="empty-state">No tickets yet. Submit a scenario to get the workflow moving.</div>`;
       return;
@@ -283,8 +467,32 @@
             <p class="ticket-message">${ticket.message}</p>
             <p class="approval-comment">Created ${formatDate(ticket.createdAt)} • Updated ${formatDate(ticket.updatedAt)}</p>
             <p class="approval-comment">Reasoning: ${ticket.triageRationale || "No rationale recorded."}</p>
+            ${
+              ticket.verificationStatus === "PENDING"
+                ? callout("warning", "Waiting on user proof", `Verification via ${ticket.verificationMethod || "configured challenge"} must complete before the run can continue.`)
+                : ""
+            }
+            ${
+              ticket.policyDecision === "BLOCK"
+                ? callout("danger", "Policy blocked execution", "The workflow classified this request as unsafe under current tenant policy and did not call an integration.")
+                : ""
+            }
+            <div class="ticket-insights">
+              <div class="insight-pill">
+                <span class="insight-label">Workflow</span>
+                <span class="insight-value">${ticket.workflowStep || ticket.workflowStatus || "Not started"}</span>
+              </div>
+              <div class="insight-pill">
+                <span class="insight-label">Action</span>
+                <span class="insight-value">${ticket.actionStatus || "Pending classification"}</span>
+              </div>
+              <div class="insight-pill">
+                <span class="insight-label">Confidence</span>
+                <span class="insight-value">${ticket.triageConfidence ?? "n/a"}</span>
+              </div>
+            </div>
             <div class="ticket-actions">
-              <button class="button button-secondary" type="button" data-ticket-id="${ticket.id}">Inspect Audit</button>
+              <button class="button button-secondary" type="button" data-ticket-id="${ticket.id}" ${!canReadAudit ? "disabled" : ""}>Inspect Audit</button>
             </div>
           </article>
         `
@@ -317,6 +525,11 @@
   }
 
   async function loadAudit(ticketId) {
+    if (!hasPermission("audit:read")) {
+      renderAudit([], null);
+      return;
+    }
+
     state.selectedTicketId = ticketId;
     const data = await apiFetch(`/api/audit/${ticketId}`);
     renderAudit(data.events, ticketId);
@@ -331,6 +544,16 @@
     els.detailHeading.textContent = `Ticket ${ticket.id}`;
     els.detailList.innerHTML = `
       <article class="detail-card">
+        ${
+          verification && verification.status === "PENDING"
+            ? callout("warning", "Verification gate is active", `The workflow is holding for ${verification.method} proof until ${formatDate(verification.expiresAt)}.`)
+            : ""
+        }
+        ${
+          actionRequest && actionRequest.policyDecision === "BLOCK"
+            ? callout("danger", "Action blocked before execution", "The policy engine stopped this request before any provider-side operation could run.")
+            : ""
+        }
         <div class="detail-grid">
           <div class="detail-item">
             <p class="detail-label">User</p>
@@ -399,6 +622,22 @@
   async function loadDashboard() {
     const session = await loadSession();
     if (!session) {
+      els.pulseGrid.innerHTML = `
+        <article class="pulse-card">
+          <p class="pulse-label">Workspace</p>
+          <p class="pulse-value">Sign in</p>
+          <p class="pulse-subtext">Authenticate to load live control coverage, queue health, and operator throughput.</p>
+        </article>
+      `;
+      els.metricsGrid.innerHTML = "";
+      els.roiGrid.innerHTML = "";
+      els.businessNarrative.innerHTML = `<div class="empty-state">Sign in to load tenant metrics and queue activity.</div>`;
+      els.demoSummary.innerHTML = "";
+      els.demoStory.innerHTML = "";
+      els.approvalsList.innerHTML = `<div class="empty-state">No approval data is available until an authenticated tenant session is loaded.</div>`;
+      els.ticketsList.innerHTML = `<div class="empty-state">No ticket data is available until you sign in.</div>`;
+      renderAudit([], null);
+      els.detailList.innerHTML = `<div class="empty-state">Sign in to inspect ticket decision paths.</div>`;
       return;
     }
 
@@ -408,17 +647,18 @@
         apiFetch("/api/business-metrics")
       ]);
 
+      renderPulse(summary, metrics);
       renderMetrics(metrics);
       renderApprovals(summary.pendingApprovals);
       renderTickets(summary.recentTickets);
       els.lastRefresh.textContent = `Last refreshed ${new Date().toLocaleTimeString()}`;
 
       if (state.selectedTicketId) {
-        await loadAudit(state.selectedTicketId);
         await loadTicketDetail(state.selectedTicketId);
+        await loadAudit(state.selectedTicketId);
       } else if (summary.recentTickets[0]) {
-        await loadAudit(summary.recentTickets[0].id);
         await loadTicketDetail(summary.recentTickets[0].id);
+        await loadAudit(summary.recentTickets[0].id);
       } else {
         renderAudit([], null);
         els.detailList.innerHTML = `<div class="empty-state">Choose a ticket to inspect the decision path.</div>`;
@@ -434,6 +674,11 @@
 
     if (!state.session) {
       window.location.href = "/auth/login";
+      return;
+    }
+
+    if (!hasPermission("tickets:submit")) {
+      els.ticketResult.textContent = "Ticket submission is disabled for this session. Ask a tenant operator or admin for submit access.";
       return;
     }
 
@@ -462,6 +707,11 @@
   }
 
   async function decideApproval(approvalId, decision) {
+    if (!hasPermission("approvals:decide")) {
+      window.alert("This session does not have approval decision permission.");
+      return;
+    }
+
     const comment = window.prompt(
       decision === "approve" ? "Approval comment" : "Rejection comment",
       decision === "approve" ? "Approved from operator console" : "Rejected from operator console"
@@ -517,9 +767,13 @@
 
     if (ticketButton) {
       const ticketId = ticketButton.getAttribute("data-ticket-id");
-      loadAudit(ticketId);
       loadTicketDetail(ticketId);
-      setActiveTab("governance");
+      if (hasPermission("audit:read")) {
+        loadAudit(ticketId);
+        setActiveTab("governance");
+      } else {
+        renderAudit([], null);
+      }
     }
   }
 

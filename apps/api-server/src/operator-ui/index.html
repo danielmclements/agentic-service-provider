@@ -36,12 +36,24 @@
               <p id="session-tenant" class="detail-value">Not loaded</p>
             </div>
             <div>
+              <p class="detail-label">Roles</p>
+              <div id="session-roles" class="chip-row">
+                <span class="badge badge-neutral">Not loaded</span>
+              </div>
+            </div>
+            <div>
               <p class="detail-label">Permissions</p>
-              <p id="session-permissions" class="detail-value">Not loaded</p>
+              <div id="session-permissions" class="chip-row">
+                <span class="badge badge-neutral">Not loaded</span>
+              </div>
             </div>
             <div>
               <p class="detail-label">MFA Freshness</p>
               <p id="session-mfa" class="detail-value">Not loaded</p>
+            </div>
+            <div id="session-assurance" class="status-panel">
+              <p class="status-title">Session assurance is loading.</p>
+              <p class="status-copy">The console will adapt once the authenticated session is available.</p>
             </div>
             <div class="scenario-row">
               <a id="login-link" class="button button-secondary" href="/auth/login">Sign In</a>
@@ -72,7 +84,10 @@
               Request
               <textarea id="ticket-message" name="message" rows="5">I am locked out of my account</textarea>
             </label>
-            <button class="button button-primary" type="submit">Submit Ticket</button>
+            <div id="compose-permission-note" class="inline-note">
+              Ticket submission follows your tenant scope and operator permissions.
+            </div>
+            <button id="submit-ticket-button" class="button button-primary" type="submit">Submit Ticket</button>
           </form>
           <pre id="ticket-result" class="result-box">No ticket submitted yet.</pre>
         </section>
@@ -92,6 +107,23 @@
             <a class="button button-secondary" href="http://localhost:8080" target="_blank" rel="noreferrer">Temporal UI</a>
           </div>
         </header>
+
+        <section id="auth-banner" class="auth-banner">
+          <div class="auth-banner-copy">
+            <p class="auth-banner-title">Checking operator session</p>
+            <p class="auth-banner-text">Loading your tenant scope, permissions, and step-up requirements.</p>
+          </div>
+        </section>
+
+        <section class="workspace-pulse">
+          <div id="pulse-grid" class="pulse-grid">
+            <article class="pulse-card">
+              <p class="pulse-label">Workspace</p>
+              <p class="pulse-value">Loading</p>
+              <p class="pulse-subtext">Preparing queue status and control coverage.</p>
+            </article>
+          </div>
+        </section>
 
         <section class="metric-strip">
           <div id="metrics-grid" class="metric-strip-grid"></div>
