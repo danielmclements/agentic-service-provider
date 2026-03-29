@@ -21,6 +21,7 @@
       "@asp/policy-engine": ["services/policy-engine/src"],
       "@asp/ticket-intake": ["services/ticket-intake/src"],
       "@asp/approval-service": ["services/approval-service/src"],
+      "@asp/operator-insights": ["services/operator-insights/src"],
       "@asp/audit-log": ["services/audit-log/src"],
       "@asp/orchestration": ["services/orchestration/src"],
       "@asp/helpdesk-triage": ["agents/helpdesk-triage/src"],

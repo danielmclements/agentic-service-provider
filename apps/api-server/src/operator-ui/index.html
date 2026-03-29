@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agentic MSP Operator Console</title>
+    <link rel="stylesheet" href="/operator/assets/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Agentic MSP</p>
+          <h1>Operator Console</h1>
+          <p class="hero-text">
+            Run the MVP like an operations product: validate automation, handle approvals, inspect audit trails, and tie the workflow back to the business case.
+          </p>
+        </div>
+        <div class="hero-actions">
+          <button id="refresh-button" class="button button-primary" type="button">Refresh Live State</button>
+          <a class="button button-secondary" href="http://localhost:8080" target="_blank" rel="noreferrer">Open Temporal UI</a>
+        </div>
+      </header>
+
+      <main class="dashboard-grid">
+        <section class="panel panel-config">
+          <div class="panel-header">
+            <div>
+              <p class="panel-kicker">Session</p>
+              <h2>Operator Settings</h2>
+            </div>
+            <p id="last-refresh" class="hint">Waiting for first refresh</p>
+          </div>
+          <form id="config-form" class="form-grid">
+            <label>
+              API Base URL
+              <input id="api-base-url" name="apiBaseUrl" type="text" value="http://localhost:4000" />
+            </label>
+            <label>
+              Tenant
+              <input id="tenant-id" name="tenantId" type="text" value="acme" />
+            </label>
+            <label>
+              API Key
+              <input id="api-key" name="apiKey" type="text" value="dev-api-key" />
+            </label>
+            <label>
+              Operator Key
+              <input id="operator-key" name="operatorKey" type="text" value="dev-operator-key" />
+            </label>
+            <div class="form-actions">
+              <button class="button button-secondary" type="submit">Save Settings</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel panel-metrics">
+          <div class="panel-header">
+            <div>
+              <p class="panel-kicker">Business Case</p>
+              <h2>Automation Scoreboard</h2>
+            </div>
+          </div>
+          <div id="metrics-grid" class="metrics-grid"></div>
+          <div id="business-narrative" class="narrative-list"></div>
+        </section>
+
+        <section class="panel panel-composer">
+          <div class="panel-header">
+            <div>
+              <p class="panel-kicker">Testing</p>
+              <h2>Create a Ticket</h2>
+            </div>
+            <p class="hint">Use this to simulate common helpdesk requests.</p>
+          </div>
+          <div class="scenario-row">
+            <button class="button button-chip" type="button" data-scenario="unlock">Unlock Scenario</button>
+            <button class="button button-chip" type="button" data-scenario="reset">Password Reset</button>
+            <button class="button button-chip" type="button" data-scenario="group">Group Access</button>
+            <button class="button button-chip" type="button" data-scenario="unsafe">Unsafe Request</button>
+          </div>
+          <form id="ticket-form" class="form-grid">
+            <label>
+              User Email
+              <input id="ticket-email" name="userEmail" type="email" value="user@acme.com" />
+            </label>
+            <label class="wide">
+              Message
+              <textarea id="ticket-message" name="message" rows="4">I am locked out of my account</textarea>
+            </label>
+            <div class="form-actions">
+              <button class="button button-primary" type="submit">Submit Ticket</button>
+            </div>
+          </form>
+          <pre id="ticket-result" class="result-box">No ticket submitted yet.</pre>
+        </section>
+
+        <section class="panel panel-approvals">
+          <div class="panel-header">
+            <div>
+              <p class="panel-kicker">Human In Loop</p>
+              <h2>Pending Approvals</h2>
+            </div>
+          </div>
+          <div id="approvals-list" class="stack-list"></div>
+        </section>
+
+        <section class="panel panel-tickets">
+          <div class="panel-header">
+            <div>
+              <p class="panel-kicker">Operations</p>
+              <h2>Recent Tickets</h2>
+            </div>
+            <p class="hint">Select a ticket to inspect the audit trail.</p>
+          </div>
+          <div id="tickets-list" class="stack-list"></div>
+        </section>
+
+        <section class="panel panel-audit">
+          <div class="panel-header">
+            <div>
+              <p class="panel-kicker">Governance</p>
+              <h2>Audit Trail</h2>
+            </div>
+            <p id="audit-heading" class="hint">Choose a ticket to load events.</p>
+          </div>
+          <div id="audit-list" class="timeline"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/operator/assets/app.js" defer></script>
+  </body>
+</html>

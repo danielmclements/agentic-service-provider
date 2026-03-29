@@ -76,6 +76,57 @@ vi.mock("@asp/audit-log", () => ({
   }
 }));
 
+vi.mock("@asp/operator-insights", () => ({
+  OperatorInsightsService: class {
+    async getOperatorSummary() {
+      return {
+        totals: {
+          tickets: 1,
+          resolved: 1,
+          waitingApproval: 0,
+          blocked: 0,
+          rejected: 0,
+          pendingApprovals: 0
+        },
+        pendingApprovals: [],
+        recentTickets: []
+      };
+    }
+
+    async getBusinessMetrics() {
+      return {
+        totals: {
+          tickets: 1,
+          actionRequests: 1,
+          approvals: 0
+        },
+        automation: {
+          autoExecuted: 1,
+          automationRatePct: 100,
+          approvalRatePct: 0,
+          blockedRatePct: 0
+        },
+        outcomes: {
+          succeeded: 1,
+          failed: 0,
+          successRatePct: 100
+        },
+        operations: {
+          avgResolutionSeconds: 1.2,
+          openApprovals: 0,
+          ticketsByAction: {
+            UNLOCK_ACCOUNT: 1
+          },
+          approvalsByStatus: {}
+        },
+        businessCase: {
+          valueNarrative: ["Automation reduces repetitive helpdesk work."]
+        }
+      };
+    }
+  }
+}));
+
 vi.mock("@asp/approval-service", () => ({
   ApprovalService: class {
     async listApprovals() {
@@ -103,5 +154,35 @@ describe("API server", () => {
     expect(typeof app).toBe("function");
     expect(typeof app.use).toBe("function");
     expect(typeof app.listen).toBe("function");
+  });
+
+  it("returns a friendly root payload", async () => {
+    const app = createApp();
+    const router = (app as { router?: { stack?: Array<{ route?: { path?: string } }> } }).router;
+    const paths =
+      router?.stack
+        ?.map((layer) => layer.route?.path)
+        .filter((path): path is string => typeof path === "string") ?? [];
+
+    expect(paths).toContain("/");
+    expect(paths).toContain("/operator");
+    expect(paths).toContain("/api/operator-summary");
+    expect(paths).toContain("/api/business-metrics");
+  });
+
+  it("registers the operator summary endpoint", async () => {
+    const app = createApp();
+    const router = (app as { router?: { stack?: Array<{ route?: { path?: string } }> } }).router;
+    const operatorSummaryRoute = router?.stack?.find((layer) => layer.route?.path === "/api/operator-summary");
+
+    expect(operatorSummaryRoute).toBeTruthy();
+  });
+
+  it("registers the business metrics endpoint", async () => {
+    const app = createApp();
+    const router = (app as { router?: { stack?: Array<{ route?: { path?: string } }> } }).router;
+    const businessMetricsRoute = router?.stack?.find((layer) => layer.route?.path === "/api/business-metrics");
+
+    expect(businessMetricsRoute).toBeTruthy();
   });
 });

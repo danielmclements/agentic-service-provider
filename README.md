@@ -5,6 +5,7 @@ Governed, multi-tenant AI service execution for IT helpdesk workflows. This MVP 
 ## What You Can Run
 
 - `api-server`: accepts tickets, exposes ticket, approval, and audit APIs
+- `operator console`: browser UI for tickets, approvals, audit inspection, and business metrics
 - `worker`: runs the Temporal workflow that performs triage, policy checks, approvals, and execution
 - `postgres + temporal`: local infrastructure for persistence and orchestration
 - `mock identity provider`: safe execution path for local testing
@@ -59,6 +60,32 @@ You should get:
 
 The seeded tenant slug is `acme`. You can use `acme` directly in API requests.
 Temporal UI is available at `http://localhost:8080`.
+The operator console is available at `http://localhost:4000/operator`.
+
+You can also open the API landing page at `http://localhost:4000/` to see the local endpoints.
+
+## Operator Console
+
+The fastest way to experience the MVP as a product is through the operator console:
+
+- live business-case metrics
+- pending approvals with approve and reject actions
+- recent tickets with state and policy context
+- per-ticket audit trail inspection
+- built-in ticket submission for local scenarios
+
+Open:
+
+```bash
+http://localhost:4000/operator
+```
+
+The default local settings are already prefilled for:
+
+- API base URL: `http://localhost:4000`
+- Tenant: `acme`
+- API key: `dev-api-key`
+- Operator key: `dev-operator-key`
 
 ## Optional: Run API and Worker Outside Docker
 
@@ -165,6 +192,58 @@ curl http://localhost:4000/api/audit/TICKET_ID \
   -H "x-api-key: dev-api-key" \
   -H "x-tenant-id: acme"
 ```
+
+### 7. Get the operator summary
+
+This is the fastest way to understand what the platform is doing right now without stitching together multiple API calls.
+
+```bash
+curl http://localhost:4000/api/operator-summary \
+  -H "x-operator-key: dev-operator-key" \
+  -H "x-tenant-id: acme"
+```
+
+### 8. Get business-case metrics
+
+This endpoint translates the current tenant activity into the metrics that matter for an MSP or internal IT buyer:
+
+- automation rate
+- approval rate
+- blocked rate
+- success rate
+- average resolution time
+- action mix
+
+```bash
+curl http://localhost:4000/api/business-metrics \
+  -H "x-operator-key: dev-operator-key" \
+  -H "x-tenant-id: acme"
+```
+
+## MVP Demo Flow
+
+Use this order when you want to test the product and the business case together:
+
+1. Submit a low-risk unlock or password-reset request.
+2. Confirm it reaches `RESOLVED` without human intervention.
+3. Submit an `ADD_TO_GROUP` request and confirm it pauses in `WAITING_APPROVAL`.
+4. Approve the request and confirm it resumes to `RESOLVED`.
+5. Review the audit trail for both tickets.
+6. Check `/api/operator-summary` to see the queue and recent outcomes.
+7. Check `/api/business-metrics` to see the current automation and safety story.
+
+## What Good Looks Like
+
+For a strong MVP demo, you want to see:
+
+- low-risk tickets moving straight to `RESOLVED`
+- medium-risk tickets pausing for approval instead of executing immediately
+- zero unsafe actions executing
+- a complete audit trail for every ticket
+- automation rate rising as repetitive requests are handled without operator effort
+- average resolution time lower than a manual helpdesk baseline
+
+This is the core business case for the platform: faster identity support, fewer manual touches, and safer execution with provable controls.
 
 ## Useful Commands
 

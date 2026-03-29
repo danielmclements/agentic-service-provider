@@ -1,9 +1,11 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
+import path from "node:path";
 import { prisma, env } from "@asp/config";
 import { AuditLogService } from "@asp/audit-log";
 import { ApprovalService } from "@asp/approval-service";
 import { httpLogger } from "@asp/logger";
+import { OperatorInsightsService } from "@asp/operator-insights";
 import { startTicketWorkflow, signalApprovalDecision } from "@asp/orchestration";
 import { TenantContextService } from "@asp/tenant-context";
 import { TicketIntakeService } from "@asp/ticket-intake";
@@ -13,6 +15,7 @@ const ticketIntakeService = new TicketIntakeService();
 const tenantContextService = new TenantContextService();
 const approvalService = new ApprovalService();
 const auditLogService = new AuditLogService();
+const operatorInsightsService = new OperatorInsightsService();
 
 async function resolveTenantId(tenantIdOrSlug: string) {
   const tenantContext = await tenantContextService.getTenantContext(tenantIdOrSlug);
@@ -59,6 +62,7 @@ declare global {
 
 export function createApp(): express.Express {
   const app = express();
+  const operatorUiPath = path.resolve(process.cwd(), "apps/api-server/src/operator-ui");
 
   app.use(express.json());
   app.use(httpLogger);
@@ -71,6 +75,33 @@ export function createApp(): express.Express {
 
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
+  });
+
+  app.use("/operator/assets", express.static(path.join(operatorUiPath, "assets")));
+
+  app.get("/operator", (_req, res) => {
+    res.sendFile(path.join(operatorUiPath, "index.html"));
+  });
+
+  app.get("/", (_req, res) => {
+    res.json({
+      name: "Agentic Service Provider MVP",
+      status: "running",
+      docs: {
+        health: "/health",
+        operatorConsole: "/operator",
+        tickets: "/api/tickets",
+        approvals: "/api/approvals",
+        audit: "/api/audit/:ticketId",
+        operatorSummary: "/api/operator-summary",
+        businessMetrics: "/api/business-metrics"
+      },
+      localDefaults: {
+        tenant: "acme",
+        apiKeyHeader: "x-api-key",
+        operatorKeyHeader: "x-operator-key"
+      }
+    });
   });
 
   app.post("/api/tickets", requireApiKey, requireTenantId, async (req, res) => {
@@ -158,6 +189,18 @@ export function createApp(): express.Express {
     const tenantId = await resolveTenantId(req.tenantId!);
     const approvals = await approvalService.listApprovals(tenantId, status);
     res.json({ approvals });
+  });
+
+  app.get("/api/operator-summary", requireOperatorKey, requireTenantId, async (req, res) => {
+    const tenantId = await resolveTenantId(req.tenantId!);
+    const summary = await operatorInsightsService.getOperatorSummary(tenantId);
+    res.json(summary);
+  });
+
+  app.get("/api/business-metrics", requireOperatorKey, requireTenantId, async (req, res) => {
+    const tenantId = await resolveTenantId(req.tenantId!);
+    const metrics = await operatorInsightsService.getBusinessMetrics(tenantId);
+    res.json(metrics);
   });
 
   app.post("/api/approvals/:id/decision", requireOperatorKey, requireTenantId, async (req, res) => {
