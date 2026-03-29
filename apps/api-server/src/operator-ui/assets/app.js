@@ -19,11 +19,16 @@
     ticketEmail: document.getElementById("ticket-email"),
     ticketResult: document.getElementById("ticket-result"),
     metricsGrid: document.getElementById("metrics-grid"),
+    roiGrid: document.getElementById("roi-grid"),
     businessNarrative: document.getElementById("business-narrative"),
+    demoSummary: document.getElementById("demo-summary"),
+    demoStory: document.getElementById("demo-story"),
     approvalsList: document.getElementById("approvals-list"),
     ticketsList: document.getElementById("tickets-list"),
     auditList: document.getElementById("audit-list"),
     auditHeading: document.getElementById("audit-heading"),
+    detailList: document.getElementById("detail-list"),
+    detailHeading: document.getElementById("detail-heading"),
     lastRefresh: document.getElementById("last-refresh"),
     apiBaseUrl: document.getElementById("api-base-url"),
     tenantId: document.getElementById("tenant-id"),
@@ -153,7 +158,42 @@
       }
     ];
 
+    const roiCards = [
+      {
+        label: "Minutes Saved",
+        value: `${metrics.roi.estimatedMinutesSaved}m`,
+        subtext: `${metrics.roi.estimatedHoursSaved}h of operator capacity returned`
+      },
+      {
+        label: "Manual Baseline",
+        value: `${metrics.roi.estimatedManualMinutes}m`,
+        subtext: "Estimated manual effort for the same workload"
+      },
+      {
+        label: "Platform Touch",
+        value: `${metrics.roi.estimatedPlatformTouchMinutes}m`,
+        subtext: "Estimated human touch with this platform in the loop"
+      },
+      {
+        label: "Approval SLA",
+        value: `${metrics.operations.avgApprovalDecisionSeconds}s`,
+        subtext: "Average time to approval decision on completed approvals"
+      }
+    ];
+
     els.metricsGrid.innerHTML = cards
+      .map(
+        (card) => `
+          <article class="metric-card">
+            <p class="metric-label">${card.label}</p>
+            <p class="metric-value">${card.value}</p>
+            <p class="metric-subtext">${card.subtext}</p>
+          </article>
+        `
+      )
+      .join("");
+
+    els.roiGrid.innerHTML = roiCards
       .map(
         (card) => `
           <article class="metric-card">
@@ -167,6 +207,23 @@
 
     els.businessNarrative.innerHTML = metrics.businessCase.valueNarrative
       .map((item) => `<div class="narrative-item">${item}</div>`)
+      .join("");
+
+    els.demoSummary.innerHTML = `
+      <article class="demo-card">
+        <p class="metric-label">Manual Queue Baseline</p>
+        <p class="metric-value">${metrics.demoMode.baseline.manualQueueMinutes}m</p>
+        <p class="metric-subtext">Estimated manual time for the current workload.</p>
+      </article>
+      <article class="demo-card">
+        <p class="metric-label">Platform-Assisted Queue</p>
+        <p class="metric-value">${metrics.demoMode.baseline.platformQueueMinutes}m</p>
+        <p class="metric-subtext">Estimated human touch with automation and approvals applied.</p>
+      </article>
+    `;
+
+    els.demoStory.innerHTML = metrics.demoMode.storyBeats
+      .map((item, index) => `<div class="narrative-item"><strong>Step ${index + 1}:</strong> ${item}</div>`)
       .join("");
   }
 
@@ -187,7 +244,8 @@
             </div>
             <h3 class="card-title">${approval.userEmail}</h3>
             <p class="ticket-message">${approval.message}</p>
-            <p class="approval-comment">Created ${formatDate(approval.createdAt)}</p>
+            <p class="approval-comment">Created ${formatDate(approval.createdAt)} • Queue age ${approval.queueAgeSeconds}s</p>
+            <p class="approval-comment">Reasoning: ${approval.triageRationale || "No rationale recorded."}</p>
             <div class="approval-actions">
               <button class="button button-approve" type="button" data-approval-id="${approval.id}" data-decision="approve">Approve</button>
               <button class="button button-reject" type="button" data-approval-id="${approval.id}" data-decision="reject">Reject</button>
@@ -213,10 +271,12 @@
               ${badge(ticket.status)}
               ${ticket.triageAction ? badge(ticket.triageAction) : ""}
               ${ticket.policyDecision ? badge(ticket.policyDecision) : ""}
+              ${ticket.riskLevel ? badge(ticket.riskLevel) : ""}
             </div>
             <h3 class="card-title">${ticket.userEmail}</h3>
             <p class="ticket-message">${ticket.message}</p>
-            <p class="approval-comment">Created ${formatDate(ticket.createdAt)}</p>
+            <p class="approval-comment">Created ${formatDate(ticket.createdAt)} • Updated ${formatDate(ticket.updatedAt)}</p>
+            <p class="approval-comment">Reasoning: ${ticket.triageRationale || "No rationale recorded."}</p>
             <div class="ticket-actions">
               <button class="button button-secondary" type="button" data-ticket-id="${ticket.id}">Inspect Audit</button>
             </div>
@@ -256,6 +316,73 @@
     renderAudit(data.events, ticketId);
   }
 
+  function renderDetail(ticket) {
+    const actionRequest = ticket.actionRequests && ticket.actionRequests[0] ? ticket.actionRequests[0] : null;
+    const approval = actionRequest && actionRequest.approval ? actionRequest.approval : null;
+    const executionRun = ticket.executionRuns && ticket.executionRuns[0] ? ticket.executionRuns[0] : null;
+
+    els.detailHeading.textContent = `Ticket ${ticket.id}`;
+    els.detailList.innerHTML = `
+      <article class="detail-card">
+        <div class="detail-grid">
+          <div class="detail-item">
+            <p class="detail-label">User</p>
+            <p class="detail-value">${ticket.userEmail}</p>
+          </div>
+          <div class="detail-item">
+            <p class="detail-label">Ticket Status</p>
+            <p class="detail-value">${ticket.status}</p>
+          </div>
+          <div class="detail-item">
+            <p class="detail-label">Intent</p>
+            <p class="detail-value">${ticket.triageIntent || "Not classified"}</p>
+          </div>
+          <div class="detail-item">
+            <p class="detail-label">Recommended Action</p>
+            <p class="detail-value">${ticket.triageAction || "No action"}</p>
+          </div>
+          <div class="detail-item">
+            <p class="detail-label">Confidence</p>
+            <p class="detail-value">${ticket.triageConfidence ?? "n/a"}</p>
+          </div>
+          <div class="detail-item">
+            <p class="detail-label">Workflow Step</p>
+            <p class="detail-value">${executionRun ? executionRun.currentStep || executionRun.status : "No workflow"}</p>
+          </div>
+        </div>
+        <div class="detail-block">
+          <p class="detail-label">Request</p>
+          <p class="detail-value">${ticket.message}</p>
+        </div>
+        <div class="detail-block">
+          <p class="detail-label">Triage Rationale</p>
+          <p class="detail-value">${ticket.triageRationale || "No rationale recorded."}</p>
+        </div>
+        <div class="detail-block">
+          <p class="detail-label">Policy Outcome</p>
+          <p class="detail-value">
+            ${actionRequest ? `${actionRequest.policyDecision} • ${actionRequest.riskLevel} • ${actionRequest.status}` : "No action request created."}
+          </p>
+        </div>
+        <div class="detail-block">
+          <p class="detail-label">Approval</p>
+          <p class="detail-value">
+            ${approval ? `${approval.status}${approval.reviewerIdentity ? ` by ${approval.reviewerIdentity}` : ""}` : "Not required"}
+          </p>
+        </div>
+        <div class="detail-block">
+          <p class="detail-label">Execution Result</p>
+          <pre class="timeline-payload">${JSON.stringify(actionRequest ? actionRequest.outputPayload : null, null, 2)}</pre>
+        </div>
+      </article>
+    `;
+  }
+
+  async function loadTicketDetail(ticketId) {
+    const data = await apiFetch(`/api/tickets/${ticketId}`, "api");
+    renderDetail(data.ticket);
+  }
+
   async function loadDashboard() {
     try {
       const [summary, metrics] = await Promise.all([
@@ -270,10 +397,13 @@
 
       if (state.selectedTicketId) {
         await loadAudit(state.selectedTicketId);
+        await loadTicketDetail(state.selectedTicketId);
       } else if (summary.recentTickets[0]) {
         await loadAudit(summary.recentTickets[0].id);
+        await loadTicketDetail(summary.recentTickets[0].id);
       } else {
         renderAudit([], null);
+        els.detailList.innerHTML = `<div class="empty-state">Choose a ticket to inspect the decision path.</div>`;
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -375,7 +505,9 @@
     const ticketButton = event.target.closest("[data-ticket-id]");
 
     if (ticketButton) {
-      loadAudit(ticketButton.getAttribute("data-ticket-id"));
+      const ticketId = ticketButton.getAttribute("data-ticket-id");
+      loadAudit(ticketId);
+      loadTicketDetail(ticketId);
     }
   }
 
