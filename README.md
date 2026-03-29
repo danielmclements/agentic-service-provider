@@ -15,7 +15,7 @@ Governed, multi-tenant AI service execution for IT helpdesk workflows. This MVP 
 - `pnpm`
 - Docker Desktop with `docker compose`
 
-This Codex environment did not have Docker installed, so I validated the code with `pnpm test`, `pnpm lint`, and `pnpm build`, but I could not boot the full local stack from here.
+The stack has now been booted and smoke-tested locally with Docker.
 
 ## Quick Start
 
@@ -31,29 +31,21 @@ cp .env.example .env
 pnpm install
 ```
 
-3. Start the full local stack:
+3. Start and bootstrap the full local stack:
 
 ```bash
-pnpm infra:up
+pnpm bootstrap:local
 ```
 
 This now boots:
 
 - Postgres
 - Temporal
+- Temporal UI
 - API server
 - Temporal worker
 
-4. Initialize the database schema and seed sample tenant data.
-
-Host-side Prisma migration is currently flaky in this environment, so the reliable path today is from inside the running API container:
-
-```bash
-docker exec docker-api-1 pnpm exec prisma db push --skip-generate
-docker exec docker-api-1 pnpm prisma:seed
-```
-
-5. Confirm the API is reachable:
+4. Confirm the API is reachable:
 
 ```bash
 curl http://localhost:4000/health
@@ -66,6 +58,7 @@ You should get:
 ```
 
 The seeded tenant slug is `acme`. You can use `acme` directly in API requests.
+Temporal UI is available at `http://localhost:8080`.
 
 ## Optional: Run API and Worker Outside Docker
 
@@ -74,7 +67,7 @@ If you prefer to keep only Postgres and Temporal in containers:
 ```bash
 pnpm infra:up
 pnpm prisma:generate
-pnpm prisma:migrate --name init
+pnpm prisma:migrate
 pnpm prisma:seed
 pnpm dev:api
 pnpm dev:worker
@@ -176,11 +169,16 @@ curl http://localhost:4000/api/audit/TICKET_ID \
 ## Useful Commands
 
 ```bash
+pnpm bootstrap:local
+pnpm smoke:approval
 docker compose -f infra/docker/docker-compose.yml ps
 docker compose -f infra/docker/docker-compose.yml logs -f api worker temporal postgres
 docker compose -f infra/docker/docker-compose.yml up -d --build
-docker exec docker-api-1 pnpm exec prisma db push --skip-generate
-docker exec docker-api-1 pnpm prisma:seed
+docker compose -f infra/docker/docker-compose.yml down -v
+pnpm prisma:generate
+pnpm prisma:migrate
+pnpm prisma:migrate:dev
+pnpm prisma:seed
 pnpm test
 pnpm lint
 pnpm build
@@ -193,3 +191,4 @@ pnpm infra:down
 - `DISABLE_MFA` is intentionally blocked in the MVP.
 - The M365 integration is stubbed; local execution uses the mock identity provider.
 - If Docker was installed with Homebrew only, you may still need Docker Desktop or another Docker engine running before `docker compose` will work.
+- The approval smoke test creates a live `ADD_TO_GROUP` request, approves it, and verifies audit events.
