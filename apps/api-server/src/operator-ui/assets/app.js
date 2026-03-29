@@ -1,5 +1,4 @@
 (function () {
-  const storageKey = "asp-operator-console";
   const scenarios = {
     unlock: "I am locked out of my account and need help getting back in.",
     reset: "Please reset my password so I can access my account.",
@@ -8,13 +7,15 @@
   };
 
   const state = {
-    selectedTicketId: null
+    selectedTicketId: null,
+    session: null
   };
 
   const els = {
-    configForm: document.getElementById("config-form"),
     ticketForm: document.getElementById("ticket-form"),
     refreshButton: document.getElementById("refresh-button"),
+    logoutButton: document.getElementById("logout-button"),
+    loginLink: document.getElementById("login-link"),
     ticketMessage: document.getElementById("ticket-message"),
     ticketEmail: document.getElementById("ticket-email"),
     ticketResult: document.getElementById("ticket-result"),
@@ -30,74 +31,33 @@
     detailList: document.getElementById("detail-list"),
     detailHeading: document.getElementById("detail-heading"),
     lastRefresh: document.getElementById("last-refresh"),
-    apiBaseUrl: document.getElementById("api-base-url"),
-    tenantId: document.getElementById("tenant-id"),
-    apiKey: document.getElementById("api-key"),
-    operatorKey: document.getElementById("operator-key")
+    sessionUser: document.getElementById("session-user"),
+    sessionTenant: document.getElementById("session-tenant"),
+    sessionPermissions: document.getElementById("session-permissions"),
+    sessionMfa: document.getElementById("session-mfa"),
+    queueBadge: document.getElementById("queue-badge"),
+    tabButtons: Array.from(document.querySelectorAll("[data-tab]")),
+    tabPanels: Array.from(document.querySelectorAll("[data-panel]"))
   };
-
-  function loadConfig() {
-    const saved = window.localStorage.getItem(storageKey);
-
-    if (!saved) {
-      return {
-        apiBaseUrl: "http://localhost:4000",
-        tenantId: "acme",
-        apiKey: "dev-api-key",
-        operatorKey: "dev-operator-key"
-      };
-    }
-
-    try {
-      return JSON.parse(saved);
-    } catch (_error) {
-      return {
-        apiBaseUrl: "http://localhost:4000",
-        tenantId: "acme",
-        apiKey: "dev-api-key",
-        operatorKey: "dev-operator-key"
-      };
-    }
-  }
-
-  function saveConfig(config) {
-    window.localStorage.setItem(storageKey, JSON.stringify(config));
-  }
-
-  function getConfig() {
-    return {
-      apiBaseUrl: els.apiBaseUrl.value.trim().replace(/\/$/, ""),
-      tenantId: els.tenantId.value.trim(),
-      apiKey: els.apiKey.value.trim(),
-      operatorKey: els.operatorKey.value.trim()
-    };
-  }
-
-  function setConfig(config) {
-    els.apiBaseUrl.value = config.apiBaseUrl;
-    els.tenantId.value = config.tenantId;
-    els.apiKey.value = config.apiKey;
-    els.operatorKey.value = config.operatorKey;
-  }
 
   function formatDate(value) {
     return new Date(value).toLocaleString();
   }
 
   function statusClass(status) {
-    if (["RESOLVED", "SUCCEEDED", "APPROVED", "COMPLETED"].includes(status)) {
+    if (["RESOLVED", "SUCCEEDED", "APPROVED", "COMPLETED", "VERIFIED", "BYPASSED"].includes(status)) {
       return "badge-success";
     }
 
-    if (["WAITING_APPROVAL", "PENDING", "REQUIRES_APPROVAL", "EXECUTING"].includes(status)) {
+    if (["WAITING_APPROVAL", "PENDING", "REQUIRES_APPROVAL", "EXECUTING", "WAITING_VERIFICATION"].includes(status)) {
       return "badge-warning";
     }
 
-    if (["FAILED", "BLOCKED", "REJECTED"].includes(status)) {
+    if (["FAILED", "BLOCKED", "REJECTED", "EXPIRED"].includes(status)) {
       return "badge-danger";
     }
 
-    if (["AUTO_EXECUTE", "LOW", "MEDIUM", "HIGH"].includes(status)) {
+    if (["AUTO_EXECUTE", "LOW", "MEDIUM", "HIGH", "PUSH", "WEBAUTHN", "SMS"].includes(status)) {
       return "badge-signal";
     }
 
@@ -105,26 +65,37 @@
   }
 
   function badge(text) {
+    if (!text) {
+      return "";
+    }
+
     const className = statusClass(text);
     return `<span class="badge ${className}">${text}</span>`;
   }
 
-  async function apiFetch(path, kind, options) {
-    const config = getConfig();
-    const headers = new Headers(options && options.headers ? options.headers : {});
+  async function apiFetch(path, options) {
+    const response = await fetch(path, {
+      credentials: "same-origin",
+      ...options,
+      headers: {
+        ...(options && options.headers ? options.headers : {})
+      }
+    });
 
-    if (kind === "operator") {
-      headers.set("x-operator-key", config.operatorKey);
-      headers.set("x-tenant-id", config.tenantId);
-    } else {
-      headers.set("x-api-key", config.apiKey);
-      headers.set("x-tenant-id", config.tenantId);
+    if (response.status === 401) {
+      const payload = await response.json().catch(() => null);
+      window.location.href = payload && payload.loginUrl ? payload.loginUrl : "/auth/login";
+      throw new Error("Authentication required");
     }
 
-    const response = await fetch(`${config.apiBaseUrl}${path}`, {
-      ...options,
-      headers
-    });
+    if (response.status === 403) {
+      const payload = await response.json().catch(() => null);
+      if (payload && payload.reauthenticateUrl) {
+        window.alert("Fresh MFA is required before this action can continue.");
+        window.location.href = payload.reauthenticateUrl;
+        throw new Error("Fresh MFA required");
+      }
+    }
 
     if (!response.ok) {
       const text = await response.text();
@@ -132,6 +103,35 @@
     }
 
     return response.json();
+  }
+
+  async function loadSession() {
+    const data = await apiFetch("/api/session");
+
+    if (!data.authenticated) {
+      els.sessionUser.textContent = "Not signed in";
+      els.sessionTenant.textContent = "Sign in required";
+      els.sessionPermissions.textContent = "No session";
+      els.sessionMfa.textContent = "No session";
+      els.loginLink.hidden = false;
+      els.logoutButton.hidden = true;
+      if (data.loginUrl) {
+        els.loginLink.href = data.loginUrl;
+      }
+      return null;
+    }
+
+    state.session = data.session;
+    els.loginLink.hidden = true;
+    els.logoutButton.hidden = false;
+    els.sessionUser.textContent = data.session.displayName || data.session.email || data.session.userId;
+    els.sessionTenant.textContent = `${data.session.tenantName} (${data.session.tenantSlug})`;
+    els.sessionPermissions.textContent = data.session.permissions.join(", ");
+    els.sessionMfa.textContent = data.session.amr.includes("mfa")
+      ? `Fresh until ${formatDate(data.session.mfaFreshUntil * 1000)}`
+      : "No MFA claim present";
+
+    return data.session;
   }
 
   function renderMetrics(metrics) {
@@ -210,12 +210,12 @@
       .join("");
 
     els.demoSummary.innerHTML = `
-      <article class="demo-card">
+      <article class="metric-card">
         <p class="metric-label">Manual Queue Baseline</p>
         <p class="metric-value">${metrics.demoMode.baseline.manualQueueMinutes}m</p>
         <p class="metric-subtext">Estimated manual time for the current workload.</p>
       </article>
-      <article class="demo-card">
+      <article class="metric-card">
         <p class="metric-label">Platform-Assisted Queue</p>
         <p class="metric-value">${metrics.demoMode.baseline.platformQueueMinutes}m</p>
         <p class="metric-subtext">Estimated human touch with automation and approvals applied.</p>
@@ -228,6 +228,8 @@
   }
 
   function renderApprovals(approvals) {
+    els.queueBadge.textContent = String(approvals.length);
+
     if (!approvals.length) {
       els.approvalsList.innerHTML = `<div class="empty-state">No pending approvals. The queue is clear.</div>`;
       return;
@@ -241,6 +243,8 @@
               ${badge(approval.riskLevel)}
               ${badge(approval.actionType)}
               ${badge(approval.ticketStatus)}
+              ${badge(approval.verificationStatus)}
+              ${badge(approval.verificationMethod)}
             </div>
             <h3 class="card-title">${approval.userEmail}</h3>
             <p class="ticket-message">${approval.message}</p>
@@ -269,9 +273,11 @@
           <article class="ticket-card">
             <div class="ticket-meta">
               ${badge(ticket.status)}
-              ${ticket.triageAction ? badge(ticket.triageAction) : ""}
-              ${ticket.policyDecision ? badge(ticket.policyDecision) : ""}
-              ${ticket.riskLevel ? badge(ticket.riskLevel) : ""}
+              ${badge(ticket.triageAction)}
+              ${badge(ticket.policyDecision)}
+              ${badge(ticket.riskLevel)}
+              ${badge(ticket.verificationStatus)}
+              ${badge(ticket.verificationMethod)}
             </div>
             <h3 class="card-title">${ticket.userEmail}</h3>
             <p class="ticket-message">${ticket.message}</p>
@@ -312,13 +318,14 @@
 
   async function loadAudit(ticketId) {
     state.selectedTicketId = ticketId;
-    const data = await apiFetch(`/api/audit/${ticketId}`, "api");
+    const data = await apiFetch(`/api/audit/${ticketId}`);
     renderAudit(data.events, ticketId);
   }
 
   function renderDetail(ticket) {
     const actionRequest = ticket.actionRequests && ticket.actionRequests[0] ? ticket.actionRequests[0] : null;
     const approval = actionRequest && actionRequest.approval ? actionRequest.approval : null;
+    const verification = actionRequest && actionRequest.verificationChallenge ? actionRequest.verificationChallenge : null;
     const executionRun = ticket.executionRuns && ticket.executionRuns[0] ? ticket.executionRuns[0] : null;
 
     els.detailHeading.textContent = `Ticket ${ticket.id}`;
@@ -365,6 +372,12 @@
           </p>
         </div>
         <div class="detail-block">
+          <p class="detail-label">Verification</p>
+          <p class="detail-value">
+            ${verification ? `${verification.status} via ${verification.method} until ${formatDate(verification.expiresAt)}` : "Not required"}
+          </p>
+        </div>
+        <div class="detail-block">
           <p class="detail-label">Approval</p>
           <p class="detail-value">
             ${approval ? `${approval.status}${approval.reviewerIdentity ? ` by ${approval.reviewerIdentity}` : ""}` : "Not required"}
@@ -379,15 +392,20 @@
   }
 
   async function loadTicketDetail(ticketId) {
-    const data = await apiFetch(`/api/tickets/${ticketId}`, "api");
+    const data = await apiFetch(`/api/tickets/${ticketId}`);
     renderDetail(data.ticket);
   }
 
   async function loadDashboard() {
+    const session = await loadSession();
+    if (!session) {
+      return;
+    }
+
     try {
       const [summary, metrics] = await Promise.all([
-        apiFetch("/api/operator-summary", "operator"),
-        apiFetch("/api/business-metrics", "operator")
+        apiFetch("/api/operator-summary"),
+        apiFetch("/api/business-metrics")
       ]);
 
       renderMetrics(metrics);
@@ -414,29 +432,27 @@
   async function submitTicket(event) {
     event.preventDefault();
 
-    const config = getConfig();
+    if (!state.session) {
+      window.location.href = "/auth/login";
+      return;
+    }
+
     const body = {
-      tenant_id: config.tenantId,
+      tenant_id: state.session.tenantId,
       user_email: els.ticketEmail.value.trim(),
       message: els.ticketMessage.value.trim()
     };
 
     try {
-      const response = await fetch(`${config.apiBaseUrl}/api/tickets`, {
+      const data = await apiFetch("/api/tickets", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": config.apiKey,
           "idempotency-key": `operator-ui-${Date.now()}`
         },
         body: JSON.stringify(body)
       });
 
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-
-      const data = await response.json();
       els.ticketResult.textContent = JSON.stringify(data, null, 2);
       await loadDashboard();
     } catch (error) {
@@ -446,26 +462,19 @@
   }
 
   async function decideApproval(approvalId, decision) {
-    const reviewerIdentity = window.prompt("Reviewer identity", "Operator Console");
-
-    if (!reviewerIdentity) {
-      return;
-    }
-
     const comment = window.prompt(
       decision === "approve" ? "Approval comment" : "Rejection comment",
       decision === "approve" ? "Approved from operator console" : "Rejected from operator console"
     );
 
     try {
-      await apiFetch(`/api/approvals/${approvalId}/decision`, "operator", {
+      await apiFetch(`/api/approvals/${approvalId}/decision`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
           decision,
-          reviewerIdentity,
           comment: comment || undefined
         })
       });
@@ -475,6 +484,11 @@
       const message = error instanceof Error ? error.message : "Unknown error";
       window.alert(`Approval action failed:\n${message}`);
     }
+  }
+
+  async function logout() {
+    const response = await apiFetch("/auth/logout", { method: "POST" });
+    window.location.href = response.logoutUrl || "/operator";
   }
 
   function handleTicketScenarios(event) {
@@ -495,10 +509,7 @@
     const approvalButton = event.target.closest("[data-approval-id]");
 
     if (approvalButton) {
-      decideApproval(
-        approvalButton.getAttribute("data-approval-id"),
-        approvalButton.getAttribute("data-decision")
-      );
+      decideApproval(approvalButton.getAttribute("data-approval-id"), approvalButton.getAttribute("data-decision"));
       return;
     }
 
@@ -508,21 +519,40 @@
       const ticketId = ticketButton.getAttribute("data-ticket-id");
       loadAudit(ticketId);
       loadTicketDetail(ticketId);
+      setActiveTab("governance");
     }
   }
 
-  function init() {
-    setConfig(loadConfig());
-    els.configForm.addEventListener("submit", function (event) {
-      event.preventDefault();
-      saveConfig(getConfig());
-      loadDashboard();
+  function setActiveTab(tabName) {
+    els.tabButtons.forEach((button) => {
+      const active = button.getAttribute("data-tab") === tabName;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-selected", active ? "true" : "false");
     });
+
+    els.tabPanels.forEach((panel) => {
+      const active = panel.getAttribute("data-panel") === tabName;
+      panel.classList.toggle("is-active", active);
+      panel.hidden = !active;
+    });
+  }
+
+  function initTabs() {
+    els.tabButtons.forEach((button) => {
+      button.addEventListener("click", function () {
+        setActiveTab(button.getAttribute("data-tab"));
+      });
+    });
+  }
+
+  function init() {
     els.ticketForm.addEventListener("submit", submitTicket);
     els.refreshButton.addEventListener("click", loadDashboard);
+    els.logoutButton.addEventListener("click", logout);
     document.addEventListener("click", handleTicketScenarios);
     els.approvalsList.addEventListener("click", handleListActions);
     els.ticketsList.addEventListener("click", handleListActions);
+    initTabs();
     loadDashboard();
     window.setInterval(loadDashboard, 15000);
   }

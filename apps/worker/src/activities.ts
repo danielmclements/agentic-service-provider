@@ -5,13 +5,15 @@ import { HelpdeskTriageAgent } from "@asp/helpdesk-triage";
 import { IdentityOpsAgent } from "@asp/identity-ops";
 import { PolicyEngineService } from "@asp/policy-engine";
 import { TenantContextService } from "@asp/tenant-context";
-import { ExecutionCommand } from "@asp/types";
+import { UserVerificationService } from "@asp/user-verification";
+import { ExecutionCommand, VerificationStatus } from "@asp/types";
 
 const tenantContextService = new TenantContextService();
 const triageAgent = new HelpdeskTriageAgent();
 const policyEngine = new PolicyEngineService();
 const identityOpsAgent = new IdentityOpsAgent();
 const auditLog = new AuditLogService();
+const userVerificationService = new UserVerificationService();
 
 function buildExecutionCommand(ticketId: string, tenantId: string, userEmail: string, actionType: ExecutionCommand["actionType"]): ExecutionCommand {
   return {
@@ -81,11 +83,17 @@ export async function triageAndEvaluatePolicy(ticketId: string, tenantId: string
     decision,
     riskLevel,
     command,
-    identityProvider: tenantContext.identityProvider
+    identityProvider: tenantContext.identityProvider,
+    verificationRequired: tenantContext.verification.requiredActions.includes(triage.recommendedAction)
   };
 }
 
-export async function markExecutionRun(ticketId: string, status: "RUNNING" | "WAITING_APPROVAL" | "COMPLETED" | "FAILED", currentStep: string, lastError?: string) {
+export async function markExecutionRun(
+  ticketId: string,
+  status: "RUNNING" | "WAITING_VERIFICATION" | "WAITING_APPROVAL" | "COMPLETED" | "FAILED",
+  currentStep: string,
+  lastError?: string
+) {
   await prisma.executionRun.updateMany({
     where: { ticketId },
     data: {
@@ -119,6 +127,83 @@ export async function createApproval(ticketId: string, actionRequestId: string) 
   return approval;
 }
 
+export async function createVerificationChallenge(ticketId: string, tenantId: string, actionRequestId: string) {
+  const ticket = await prisma.ticket.findFirstOrThrow({
+    where: { id: ticketId, tenantId }
+  });
+  const tenantContext = await tenantContextService.getTenantContext(tenantId);
+  const result = await userVerificationService.ensureChallenge(actionRequestId, ticket.userEmail, tenantContext);
+
+  if (!result.required || !result.challenge) {
+    return {
+      required: false,
+      challengeId: null
+    };
+  }
+
+  await prisma.ticket.update({
+    where: { id: ticketId },
+    data: { status: "WAITING_VERIFICATION" }
+  });
+
+  await auditLog.log({
+    tenantId,
+    ticketId,
+    actionRequestId,
+    eventType: "VERIFICATION_REQUESTED",
+    actor: "system",
+    payload: {
+      verificationChallengeId: result.challenge.id,
+      method: result.challenge.method,
+      targetReference: result.challenge.targetReference,
+      expiresAt: result.challenge.expiresAt
+    }
+  });
+
+  return {
+    required: true,
+    challengeId: result.challenge.id
+  };
+}
+
+export async function resolveVerificationChallenge(
+  ticketId: string,
+  tenantId: string,
+  actionRequestId: string,
+  status: VerificationStatus,
+  evidencePayload?: Record<string, unknown>
+) {
+  const updatedChallenge = await userVerificationService.recordDecision(actionRequestId, status, evidencePayload);
+
+  if (status === "VERIFIED" || status === "BYPASSED") {
+    await prisma.ticket.update({
+      where: { id: ticketId },
+      data: { status: "TRIAGED" }
+    });
+  } else {
+    await prisma.ticket.update({
+      where: { id: ticketId },
+      data: { status: "REJECTED" }
+    });
+  }
+
+  await auditLog.log({
+    tenantId,
+    ticketId,
+    actionRequestId,
+    eventType: "VERIFICATION_COMPLETED",
+    actor: "system",
+    payload: {
+      status: updatedChallenge.status,
+      method: updatedChallenge.method,
+      completedAt: updatedChallenge.completedAt,
+      evidencePayload: evidencePayload ?? {}
+    }
+  });
+
+  return updatedChallenge;
+}
+
 export async function executeAction(ticketId: string, tenantId: string, actionRequestId: string) {
   const ticket = await prisma.ticket.findFirstOrThrow({
     where: { id: ticketId, tenantId }
@@ -126,8 +211,15 @@ export async function executeAction(ticketId: string, tenantId: string, actionRe
   const actionRequest = await prisma.actionRequest.findUniqueOrThrow({
     where: { id: actionRequestId }
   });
+  const verificationChallenge = await prisma.verificationChallenge.findUnique({
+    where: { actionRequestId }
+  });
   const tenantContext = await tenantContextService.getTenantContext(tenantId);
   const command = actionRequest.inputPayload as unknown as ExecutionCommand;
+
+  if (verificationChallenge && !["VERIFIED", "BYPASSED"].includes(verificationChallenge.status)) {
+    throw new Error("Execution cannot start until user verification succeeds");
+  }
 
   await prisma.ticket.update({
     where: { id: ticketId },

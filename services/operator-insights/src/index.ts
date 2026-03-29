@@ -42,7 +42,8 @@ export class OperatorInsightsService {
         include: {
           actionRequests: {
             include: {
-              approval: true
+              approval: true,
+              verificationChallenge: true
             }
           },
           executionRuns: true
@@ -59,7 +60,11 @@ export class OperatorInsightsService {
         },
         include: {
           ticket: true,
-          actionRequest: true
+          actionRequest: {
+            include: {
+              verificationChallenge: true
+            }
+          }
         },
         orderBy: { createdAt: "asc" },
         take: 10
@@ -114,11 +119,14 @@ export class OperatorInsightsService {
         recommendedAction: approval.ticket.triageAction,
         triageConfidence: approval.ticket.triageConfidence,
         triageRationale: approval.ticket.triageRationale,
-        message: approval.ticket.message
+        message: approval.ticket.message,
+        verificationStatus: approval.actionRequest.verificationChallenge?.status ?? null,
+        verificationMethod: approval.actionRequest.verificationChallenge?.method ?? null
       })),
       recentTickets: tickets.map((ticket) => {
         const actionRequest = ticket.actionRequests[0] ?? null;
         const approval = actionRequest?.approval ?? null;
+        const verification = actionRequest?.verificationChallenge ?? null;
         const executionRun = ticket.executionRuns[0] ?? null;
 
         return {
@@ -134,6 +142,8 @@ export class OperatorInsightsService {
           actionStatus: actionRequest?.status ?? null,
           policyDecision: actionRequest?.policyDecision ?? null,
           approvalStatus: approval?.status ?? null,
+          verificationStatus: verification?.status ?? null,
+          verificationMethod: verification?.method ?? null,
           workflowStatus: executionRun?.status ?? null,
           workflowStep: executionRun?.currentStep ?? null,
           updatedAt: ticket.updatedAt,

@@ -15,6 +15,7 @@ enum IdentityProvider {
 enum TicketStatus {
   RECEIVED
   TRIAGED
+  WAITING_VERIFICATION
   WAITING_APPROVAL
   EXECUTING
   RESOLVED
@@ -43,6 +44,7 @@ enum PolicyDecision {
 
 enum ActionStatus {
   PENDING
+  WAITING_VERIFICATION
   WAITING_APPROVAL
   APPROVED
   REJECTED
@@ -61,9 +63,39 @@ enum ApprovalStatus {
 enum ExecutionRunStatus {
   PENDING
   RUNNING
+  WAITING_VERIFICATION
   COMPLETED
   FAILED
   WAITING_APPROVAL
+}
+
+enum OperatorRole {
+  TENANT_VIEWER
+  TENANT_OPERATOR
+  TENANT_APPROVER
+  TENANT_ADMIN
+  PLATFORM_ADMIN
+}
+
+enum AuthConnectionStrategy {
+  AUTH0_DATABASE
+  OIDC
+  SAML
+}
+
+enum VerificationMethod {
+  PUSH
+  WEBAUTHN
+  SMS
+  MANUAL_REVIEW
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  FAILED
+  EXPIRED
+  BYPASSED
 }
 
 model Tenant {
@@ -75,6 +107,10 @@ model Tenant {
   policy           TenantPolicy?
   tickets          Ticket[]
   auditLogs        AuditLog[]
+  memberships      TenantMembership[]
+  authConnections  TenantAuthConnection[]
+  operatorSessions OperatorSession[]
+  connectorConfigs TenantConnectorConfig[]
 }
 
 model TenantPolicy {
@@ -83,6 +119,7 @@ model TenantPolicy {
   allowedActions Json
   approvalRules  Json
   modelSettings  Json
+  verificationSettings Json?
   tenant         Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
@@ -127,6 +164,7 @@ model ActionRequest {
   ticket         Ticket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   approval       Approval?
   auditLogs      AuditLog[]
+  verificationChallenge VerificationChallenge?
 }
 
 model Approval {
@@ -149,6 +187,10 @@ model AuditLog {
   actionRequestId String?
   eventType       String
   actor           String
+  actorSubject    String?
+  actorOrgId      String?
+  actorSessionId  String?
+  actorDisplayName String?
   approvedBy      String?
   payload         Json
   createdAt       DateTime       @default(now())
@@ -167,4 +209,99 @@ model ExecutionRun {
   startedAt   DateTime           @default(now())
   completedAt DateTime?
   ticket      Ticket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+}
+
+model TenantMembership {
+  id            String       @id @default(cuid())
+  tenantId      String
+  auth0UserId   String
+  auth0OrgId    String
+  email         String?
+  displayName   String?
+  role          OperatorRole
+  permissions   Json
+  active        Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sessions      OperatorSession[]
+
+  @@unique([tenantId, auth0UserId])
+  @@index([tenantId, auth0OrgId])
+}
+
+model TenantAuthConnection {
+  id                  String                 @id @default(cuid())
+  tenantId            String
+  auth0OrganizationId String                 @unique
+  displayName         String
+  strategy            AuthConnectionStrategy
+  connectionName      String
+  issuer              String?
+  clientId            String?
+  metadata            Json?
+  isDefault           Boolean                @default(false)
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  tenant              Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, isDefault])
+}
+
+model OperatorSession {
+  id                 String           @id @default(cuid())
+  tenantId           String
+  membershipId       String
+  auth0UserId        String
+  auth0OrganizationId String
+  sessionId          String           @unique
+  email              String?
+  displayName        String?
+  roles              Json
+  permissions        Json
+  authTime           DateTime
+  amr                Json
+  lastSeenAt         DateTime         @default(now())
+  revokedAt          DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  tenant             Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  membership         TenantMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, auth0UserId])
+}
+
+model VerificationChallenge {
+  id               String             @id @default(cuid())
+  actionRequestId  String             @unique
+  method           VerificationMethod
+  status           VerificationStatus @default(PENDING)
+  targetReference  String
+  evidencePayload  Json?
+  issuedAt         DateTime           @default(now())
+  expiresAt        DateTime
+  completedAt      DateTime?
+  attemptCount     Int                @default(0)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  actionRequest    ActionRequest      @relation(fields: [actionRequestId], references: [id], onDelete: Cascade)
+}
+
+model TenantConnectorConfig {
+  id                   String   @id @default(cuid())
+  tenantId             String
+  provider             IdentityProvider
+  entraTenantId        String?
+  clientId             String?
+  clientSecretVaultRef String?
+  clientCertVaultRef   String?
+  allowedGraphScopes   Json
+  allowedTargetGroups  Json
+  metadata             Json?
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, provider])
 }

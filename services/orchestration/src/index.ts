@@ -27,3 +27,12 @@ export async function signalApprovalDecision(workflowId: string, input: { approv
   const handle = client.workflow.getHandle(workflowId);
   await handle.signal("approvalDecisionSignal", input);
 }
+
+export async function signalVerificationDecision(
+  workflowId: string,
+  input: { status: "VERIFIED" | "FAILED" | "EXPIRED" | "BYPASSED"; evidencePayload?: Record<string, unknown> }
+) {
+  const client = await createTemporalClient();
+  const handle = client.workflow.getHandle(workflowId);
+  await handle.signal("verificationDecisionSignal", input);
+}

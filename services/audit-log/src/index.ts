@@ -23,6 +23,10 @@ export class AuditLogService {
         actionRequestId: event.actionRequestId,
         eventType: event.eventType,
         actor: event.actor,
+        actorSubject: event.actorSubject,
+        actorOrgId: event.actorOrgId,
+        actorSessionId: event.actorSessionId,
+        actorDisplayName: event.actorDisplayName,
         approvedBy: event.approvedBy,
         payload: redact(event.payload) as Prisma.InputJsonValue
       }

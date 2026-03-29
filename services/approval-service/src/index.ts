@@ -28,7 +28,7 @@ export class ApprovalService {
     });
   }
 
-  async applyDecision(approvalId: string, tenantId: string, input: ApprovalDecisionInput) {
+  async applyDecision(approvalId: string, tenantId: string, input: ApprovalDecisionInput, reviewerIdentity?: string) {
     const approval = await prisma.approval.findFirst({
       where: {
         id: approvalId,
@@ -57,7 +57,7 @@ export class ApprovalService {
         where: { id: approvalId },
         data: {
           status,
-          reviewerIdentity: input.reviewerIdentity,
+          reviewerIdentity,
           reviewerComment: input.comment,
           decidedAt: new Date()
         }

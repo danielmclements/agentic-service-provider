@@ -7,148 +7,192 @@
     <link rel="stylesheet" href="/operator/assets/styles.css" />
   </head>
   <body>
-    <div class="page-shell">
-      <header class="hero">
-        <div class="hero-copy">
-          <p class="eyebrow">Agentic MSP</p>
-          <h1>Operator Console</h1>
-          <p class="hero-text">
-            Run the MVP like an operations product: validate automation, handle approvals, inspect audit trails, and tie the workflow back to the business case.
-          </p>
-        </div>
-        <div class="hero-actions">
-          <button id="refresh-button" class="button button-primary" type="button">Refresh Live State</button>
-          <a class="button button-secondary" href="http://localhost:8080" target="_blank" rel="noreferrer">Open Temporal UI</a>
-        </div>
-      </header>
-
-      <main class="dashboard-grid">
-        <section class="panel panel-config">
-          <div class="panel-header">
-            <div>
-              <p class="panel-kicker">Session</p>
-              <h2>Operator Settings</h2>
-            </div>
-            <p id="last-refresh" class="hint">Waiting for first refresh</p>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand-card">
+          <div class="brand-mark">A</div>
+          <div>
+            <p class="eyebrow">Agentic MSP</p>
+            <h1>Operator Cloud</h1>
+            <p class="sidebar-copy">A tighter control plane for approvals, automation, governance, and ROI.</p>
           </div>
-          <form id="config-form" class="form-grid">
-            <label>
-              API Base URL
-              <input id="api-base-url" name="apiBaseUrl" type="text" value="http://localhost:4000" />
-            </label>
-            <label>
-              Tenant
-              <input id="tenant-id" name="tenantId" type="text" value="acme" />
-            </label>
-            <label>
-              API Key
-              <input id="api-key" name="apiKey" type="text" value="dev-api-key" />
-            </label>
-            <label>
-              Operator Key
-              <input id="operator-key" name="operatorKey" type="text" value="dev-operator-key" />
-            </label>
-            <div class="form-actions">
-              <button class="button button-secondary" type="submit">Save Settings</button>
-            </div>
-          </form>
-        </section>
+        </div>
 
-        <section class="panel panel-metrics">
-          <div class="panel-header">
+        <section class="sidebar-card">
+          <div class="section-header">
             <div>
-              <p class="panel-kicker">Business Case</p>
-              <h2>Automation Scoreboard</h2>
+              <p class="section-kicker">Session</p>
+              <h2>Authenticated Operator</h2>
+            </div>
+            <p id="last-refresh" class="meta-text">Waiting for refresh</p>
+          </div>
+          <div class="stack-form">
+            <div>
+              <p class="detail-label">Operator</p>
+              <p id="session-user" class="detail-value">Checking session...</p>
+            </div>
+            <div>
+              <p class="detail-label">Tenant</p>
+              <p id="session-tenant" class="detail-value">Not loaded</p>
+            </div>
+            <div>
+              <p class="detail-label">Permissions</p>
+              <p id="session-permissions" class="detail-value">Not loaded</p>
+            </div>
+            <div>
+              <p class="detail-label">MFA Freshness</p>
+              <p id="session-mfa" class="detail-value">Not loaded</p>
+            </div>
+            <div class="scenario-row">
+              <a id="login-link" class="button button-secondary" href="/auth/login">Sign In</a>
+              <button id="logout-button" class="button button-secondary" type="button">Sign Out</button>
             </div>
           </div>
-          <div id="metrics-grid" class="metrics-grid"></div>
-          <div id="roi-grid" class="metrics-grid metrics-grid-secondary"></div>
-          <div id="business-narrative" class="narrative-list"></div>
         </section>
 
-        <section class="panel panel-composer">
-          <div class="panel-header">
+        <section class="sidebar-card">
+          <div class="section-header">
             <div>
-              <p class="panel-kicker">Testing</p>
-              <h2>Create a Ticket</h2>
+              <p class="section-kicker">Testing</p>
+              <h2>Quick Ticket</h2>
             </div>
-            <p class="hint">Use this to simulate common helpdesk requests.</p>
           </div>
           <div class="scenario-row">
-            <button class="button button-chip" type="button" data-scenario="unlock">Unlock Scenario</button>
-            <button class="button button-chip" type="button" data-scenario="reset">Password Reset</button>
-            <button class="button button-chip" type="button" data-scenario="group">Group Access</button>
-            <button class="button button-chip" type="button" data-scenario="unsafe">Unsafe Request</button>
+            <button class="button button-chip" type="button" data-scenario="unlock">Unlock</button>
+            <button class="button button-chip" type="button" data-scenario="reset">Reset</button>
+            <button class="button button-chip" type="button" data-scenario="group">Group</button>
+            <button class="button button-chip" type="button" data-scenario="unsafe">Unsafe</button>
           </div>
-          <form id="ticket-form" class="form-grid">
+          <form id="ticket-form" class="stack-form">
             <label>
               User Email
               <input id="ticket-email" name="userEmail" type="email" value="user@acme.com" />
             </label>
-            <label class="wide">
-              Message
-              <textarea id="ticket-message" name="message" rows="4">I am locked out of my account</textarea>
+            <label>
+              Request
+              <textarea id="ticket-message" name="message" rows="5">I am locked out of my account</textarea>
             </label>
-            <div class="form-actions">
-              <button class="button button-primary" type="submit">Submit Ticket</button>
-            </div>
+            <button class="button button-primary" type="submit">Submit Ticket</button>
           </form>
           <pre id="ticket-result" class="result-box">No ticket submitted yet.</pre>
         </section>
+      </aside>
 
-        <section class="panel panel-demo">
-          <div class="panel-header">
-            <div>
-              <p class="panel-kicker">Demo Mode</p>
-              <h2>Buyer Storyline</h2>
-            </div>
-            <p class="hint">A concise walkthrough for showing the value of the platform.</p>
+      <main class="main-shell">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Operations</p>
+            <h2 class="page-title">Identity automation, approvals, and auditability in one place</h2>
+            <p class="page-copy">
+              Watch the queue, prove the controls, and show the business case without dropping into raw APIs.
+            </p>
           </div>
-          <div id="demo-summary" class="demo-summary"></div>
-          <div id="demo-story" class="narrative-list"></div>
+          <div class="topbar-actions">
+            <button id="refresh-button" class="button button-primary" type="button">Refresh Live State</button>
+            <a class="button button-secondary" href="http://localhost:8080" target="_blank" rel="noreferrer">Temporal UI</a>
+          </div>
+        </header>
+
+        <section class="metric-strip">
+          <div id="metrics-grid" class="metric-strip-grid"></div>
         </section>
 
-        <section class="panel panel-approvals">
-          <div class="panel-header">
-            <div>
-              <p class="panel-kicker">Human In Loop</p>
-              <h2>Pending Approvals</h2>
+        <section class="workspace">
+          <div class="workspace-header">
+            <div class="tab-list" role="tablist" aria-label="Operator views">
+              <button class="tab-button is-active" type="button" data-tab="overview" role="tab" aria-selected="true">Overview</button>
+              <button class="tab-button" type="button" data-tab="queue" role="tab" aria-selected="false">
+                Queue
+                <span id="queue-badge" class="tab-badge">0</span>
+              </button>
+              <button class="tab-button" type="button" data-tab="governance" role="tab" aria-selected="false">Governance</button>
             </div>
           </div>
-          <div id="approvals-list" class="stack-list"></div>
-        </section>
 
-        <section class="panel panel-tickets">
-          <div class="panel-header">
-            <div>
-              <p class="panel-kicker">Operations</p>
-              <h2>Recent Tickets</h2>
-            </div>
-            <p class="hint">Select a ticket to inspect the audit trail.</p>
-          </div>
-          <div id="tickets-list" class="stack-list"></div>
-        </section>
+          <section class="tab-panel is-active" data-panel="overview">
+            <div class="content-grid content-grid-overview">
+              <section class="surface">
+                <div class="section-header">
+                  <div>
+                    <p class="section-kicker">Automation Story</p>
+                    <h3>ROI Snapshot</h3>
+                  </div>
+                </div>
+                <div id="roi-grid" class="mini-metric-grid"></div>
+              </section>
 
-        <section class="panel panel-audit">
-          <div class="panel-header">
-            <div>
-              <p class="panel-kicker">Governance</p>
-              <h2>Audit Trail</h2>
-            </div>
-            <p id="audit-heading" class="hint">Choose a ticket to load events.</p>
-          </div>
-          <div id="audit-list" class="timeline"></div>
-        </section>
+              <section class="surface">
+                <div class="section-header">
+                  <div>
+                    <p class="section-kicker">Narrative</p>
+                    <h3>Business Case</h3>
+                  </div>
+                </div>
+                <div id="business-narrative" class="narrative-list"></div>
+              </section>
 
-        <section class="panel panel-detail">
-          <div class="panel-header">
-            <div>
-              <p class="panel-kicker">Ticket Detail</p>
-              <h2>Reasoning And Outcome</h2>
+              <section class="surface surface-wide">
+                <div class="section-header">
+                  <div>
+                    <p class="section-kicker">Demo Mode</p>
+                    <h3>Buyer Walkthrough</h3>
+                  </div>
+                </div>
+                <div id="demo-summary" class="mini-metric-grid"></div>
+                <div id="demo-story" class="story-grid"></div>
+              </section>
             </div>
-            <p id="detail-heading" class="hint">Choose a ticket to inspect classification and execution detail.</p>
-          </div>
-          <div id="detail-list" class="detail-stack"></div>
+          </section>
+
+          <section class="tab-panel" data-panel="queue" hidden>
+            <div class="content-grid">
+              <section class="surface">
+                <div class="section-header">
+                  <div>
+                    <p class="section-kicker">Human In Loop</p>
+                    <h3>Pending Approvals</h3>
+                  </div>
+                </div>
+                <div id="approvals-list" class="stack-list"></div>
+              </section>
+
+              <section class="surface">
+                <div class="section-header">
+                  <div>
+                    <p class="section-kicker">Recent Activity</p>
+                    <h3>Tickets</h3>
+                  </div>
+                </div>
+                <div id="tickets-list" class="stack-list"></div>
+              </section>
+            </div>
+          </section>
+
+          <section class="tab-panel" data-panel="governance" hidden>
+            <div class="content-grid">
+              <section class="surface">
+                <div class="section-header">
+                  <div>
+                    <p class="section-kicker">Decision Path</p>
+                    <h3>Ticket Detail</h3>
+                  </div>
+                  <p id="detail-heading" class="meta-text">Choose a ticket to inspect classification and execution detail.</p>
+                </div>
+                <div id="detail-list" class="detail-stack"></div>
+              </section>
+
+              <section class="surface">
+                <div class="section-header">
+                  <div>
+                    <p class="section-kicker">Governance</p>
+                    <h3>Audit Trail</h3>
+                  </div>
+                  <p id="audit-heading" class="meta-text">Choose a ticket to load events.</p>
+                </div>
+                <div id="audit-list" class="timeline"></div>
+              </section>
+            </div>
+          </section>
         </section>
       </main>
     </div>

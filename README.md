@@ -2,6 +2,13 @@
 
 Governed, multi-tenant AI service execution for IT helpdesk workflows. This MVP focuses on identity operations: password resets, account unlocks, group membership requests, and policy-gated approvals.
 
+The current auth model is Auth0-first:
+
+- operators authenticate through Auth0-backed browser sessions
+- operator tenant scope is derived from Auth0 organization membership
+- service-to-service ticket ingestion uses bearer tokens with tenant claims instead of static API keys
+- risky actions can pause on end-user verification before approval or execution
+
 ## What You Can Run
 
 - `api-server`: accepts tickets, exposes ticket, approval, and audit APIs
@@ -80,12 +87,11 @@ Open:
 http://localhost:4000/operator
 ```
 
-The default local settings are already prefilled for:
+The operator console now relies on the server session:
 
-- API base URL: `http://localhost:4000`
-- Tenant: `acme`
-- API key: `dev-api-key`
-- Operator key: `dev-operator-key`
+- sign in through `/auth/login`
+- the UI derives tenant, permissions, and MFA freshness from `/api/session`
+- there are no browser-stored API keys or operator keys
 
 ## Optional: Run API and Worker Outside Docker
 
@@ -100,12 +106,33 @@ pnpm dev:api
 pnpm dev:worker
 ```
 
-## Default Local Secrets
+## Default Local Auth Configuration
 
-- API key: `dev-api-key`
-- Operator API key: `dev-operator-key`
-- Tenant slug: `acme`
-- API base URL: `http://localhost:4000`
+- default tenant slug: `acme`
+- default Auth0 organization: `org_acme`
+- local callback URL: `http://localhost:4000/auth/callback`
+- session cookie name: `asp_operator_session`
+- local JWT secret for dev tokens: `AUTH0_JWT_SECRET`
+
+For local-only testing without a live Auth0 login, you can mint a development bearer token:
+
+```bash
+pnpm auth:token:daniel
+```
+
+This prints an `HS256` token for the seeded Acme operator:
+
+- name: `Daniel Clements`
+- email: `daniel.clements@acme.com`
+- Auth0 subject: `auth0|daniel.clements`
+- Auth0 organization: `org_acme`
+
+Use it as:
+
+```bash
+TOKEN=$(pnpm -s auth:token:daniel)
+curl http://localhost:4000/api/session -H "Authorization: Bearer $TOKEN"
+```
 
 ## Basic Flow
 

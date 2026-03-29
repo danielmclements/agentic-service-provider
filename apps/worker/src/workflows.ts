@@ -2,7 +2,7 @@ import { condition, defineSignal, proxyActivities, setHandler } from "@temporali
 import { WorkflowTicketPayload } from "@asp/types";
 import type * as activities from "./activities";
 
-const { triageAndEvaluatePolicy, markExecutionRun, createApproval, executeAction, rejectAction, blockAction } = proxyActivities<typeof activities>({
+const { triageAndEvaluatePolicy, markExecutionRun, createApproval, createVerificationChallenge, resolveVerificationChallenge, executeAction, rejectAction, blockAction } = proxyActivities<typeof activities>({
   startToCloseTimeout: "1 minute"
 });
 
@@ -12,11 +12,21 @@ const approvalDecisionSignal = defineSignal<[{
   comment?: string;
 }]>("approvalDecisionSignal");
 
+const verificationDecisionSignal = defineSignal<[{
+  status: "VERIFIED" | "FAILED" | "EXPIRED" | "BYPASSED";
+  evidencePayload?: Record<string, unknown>;
+}]>("verificationDecisionSignal");
+
 export async function helpdeskTicketWorkflow(input: WorkflowTicketPayload) {
   let approvalDecision: { approved: boolean; reviewerIdentity: string; comment?: string } | null = null;
+  let verificationDecision: { status: "VERIFIED" | "FAILED" | "EXPIRED" | "BYPASSED"; evidencePayload?: Record<string, unknown> } | null = null;
 
   setHandler(approvalDecisionSignal, (decision) => {
     approvalDecision = decision;
+  });
+
+  setHandler(verificationDecisionSignal, (decision) => {
+    verificationDecision = decision;
   });
 
   await markExecutionRun(input.ticketId, "RUNNING", "TRIAGE");
@@ -26,6 +36,26 @@ export async function helpdeskTicketWorkflow(input: WorkflowTicketPayload) {
     await blockAction(input.ticketId, input.tenantId, triageOutcome.actionRequestId);
     await markExecutionRun(input.ticketId, "FAILED", "BLOCKED", "Action blocked by policy engine");
     return { status: "BLOCKED" };
+  }
+
+  if (triageOutcome.verificationRequired) {
+    await createVerificationChallenge(input.ticketId, input.tenantId, triageOutcome.actionRequestId);
+    await markExecutionRun(input.ticketId, "WAITING_VERIFICATION", "WAITING_VERIFICATION");
+    await condition(() => verificationDecision !== null);
+
+    const verification = verificationDecision!;
+    await resolveVerificationChallenge(
+      input.ticketId,
+      input.tenantId,
+      triageOutcome.actionRequestId,
+      verification.status,
+      verification.evidencePayload
+    );
+
+    if (!["VERIFIED", "BYPASSED"].includes(verification.status)) {
+      await markExecutionRun(input.ticketId, "FAILED", "VERIFICATION_FAILED", "User verification failed");
+      return { status: "REJECTED" };
+    }
   }
 
   if (triageOutcome.decision === "REQUIRES_APPROVAL") {
