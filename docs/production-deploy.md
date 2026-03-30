@@ -24,6 +24,7 @@ This repo now includes a production-oriented Compose stack with:
 
 ```bash
 cp .env.production.example .env.production
+ln -sfn .env.production .env
 ```
 
 2. Create the secrets directory and required secret files:
@@ -62,6 +63,8 @@ docker run --rm caddy:2.9-alpine caddy hash-password --plaintext 'replace-me'
 ```
 
 When you place that bcrypt hash into `.env.production` or the `PROD_ENV_FILE` GitHub secret, escape every `$` as `$$` so Docker Compose does not treat the hash as variable interpolation.
+
+The `.env` symlink keeps plain `docker compose -f infra/docker/docker-compose.prod.yml ...` commands from warning about unset variables during interpolation. If you prefer not to use the symlink, pass `--env-file .env.production` on every production Compose command instead.
 
 ## Deploy
 
