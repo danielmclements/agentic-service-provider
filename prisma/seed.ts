@@ -32,6 +32,36 @@ async function seed() {
     }
   });
 
+  const operatorAdminUser = await prisma.user.upsert({
+    where: { auth0UserId: "auth0|operator-admin" },
+    update: {
+      email: "operator@acme.com",
+      displayName: "Acme Operator",
+      active: true
+    },
+    create: {
+      auth0UserId: "auth0|operator-admin",
+      email: "operator@acme.com",
+      displayName: "Acme Operator",
+      globalRoles: []
+    }
+  });
+
+  const danielUser = await prisma.user.upsert({
+    where: { auth0UserId: "auth0|daniel.clements" },
+    update: {
+      email: "daniel.clements@acme.com",
+      displayName: "Daniel Clements",
+      active: true
+    },
+    create: {
+      auth0UserId: "auth0|daniel.clements",
+      email: "daniel.clements@acme.com",
+      displayName: "Daniel Clements",
+      globalRoles: []
+    }
+  });
+
   await prisma.tenantAuthConnection.upsert({
     where: { auth0OrganizationId: "org_acme" },
     update: {
@@ -50,15 +80,15 @@ async function seed() {
 
   await prisma.tenantMembership.upsert({
     where: {
-      tenantId_auth0UserId: {
+      tenantId_userId: {
         tenantId: tenant.id,
-        auth0UserId: "auth0|operator-admin"
+        userId: operatorAdminUser.id
       }
     },
     update: {},
     create: {
       tenantId: tenant.id,
-      auth0UserId: "auth0|operator-admin",
+      userId: operatorAdminUser.id,
       auth0OrgId: "org_acme",
       email: "operator@acme.com",
       displayName: "Acme Operator",
@@ -77,9 +107,9 @@ async function seed() {
 
   await prisma.tenantMembership.upsert({
     where: {
-      tenantId_auth0UserId: {
+      tenantId_userId: {
         tenantId: tenant.id,
-        auth0UserId: "auth0|daniel.clements"
+        userId: danielUser.id
       }
     },
     update: {
@@ -100,7 +130,7 @@ async function seed() {
     },
     create: {
       tenantId: tenant.id,
-      auth0UserId: "auth0|daniel.clements",
+      userId: danielUser.id,
       auth0OrgId: "org_acme",
       email: "daniel.clements@acme.com",
       displayName: "Daniel Clements",

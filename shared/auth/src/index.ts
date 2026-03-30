@@ -292,10 +292,28 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
     throw new Error("No tenant is mapped to the provided Auth0 organization");
   }
 
+  const user = await prisma.user.upsert({
+    where: { auth0UserId: userId },
+    create: {
+      auth0UserId: userId,
+      email: typeof payload.email === "string" ? payload.email : null,
+      displayName: typeof payload.name === "string" ? payload.name : null,
+      globalRoles: []
+    },
+    update: {
+      email: typeof payload.email === "string" ? payload.email : undefined,
+      displayName: typeof payload.name === "string" ? payload.name : undefined
+    }
+  });
+
+  if (!user.active) {
+    throw new Error("Authenticated user is inactive");
+  }
+
   const membership = await prisma.tenantMembership.findFirst({
     where: {
       tenantId: authConnection.tenantId,
-      auth0UserId: userId,
+      userId: user.id,
       active: true
     }
   });
@@ -325,7 +343,7 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
     create: {
       tenantId: authConnection.tenantId,
       membershipId: membership.id,
-      auth0UserId: userId,
+      userId: user.id,
       auth0OrganizationId: orgId ?? authConnection.auth0OrganizationId,
       sessionId,
       email: typeof payload.email === "string" ? payload.email : membership.email,
@@ -338,6 +356,7 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
     },
     update: {
       membershipId: membership.id,
+      userId: user.id,
       email: typeof payload.email === "string" ? payload.email : membership.email,
       displayName: typeof payload.name === "string" ? payload.name : membership.displayName,
       roles: mergedRoles,
