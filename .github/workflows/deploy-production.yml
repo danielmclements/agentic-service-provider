@@ -60,6 +60,19 @@ jobs:
           printf '%s\n' "$PROD_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
+      - name: Verify SSH access
+        env:
+          PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+          PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+          PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+        run: |
+          ssh \
+            -i ~/.ssh/id_ed25519 \
+            -o IdentitiesOnly=yes \
+            -p "${PROD_SSH_PORT:-22}" \
+            "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
+            "echo connected"
+
       - name: Sync repository to server
         env:
           PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
@@ -68,8 +81,14 @@ jobs:
           PROD_DEPLOY_PATH: ${{ vars.PROD_DEPLOY_PATH }}
         run: |
           test -n "$PROD_DEPLOY_PATH"
-          ssh -p "${PROD_SSH_PORT:-22}" "${PROD_SSH_USER}@${PROD_SSH_HOST}" "mkdir -p '$PROD_DEPLOY_PATH'"
+          ssh \
+            -i ~/.ssh/id_ed25519 \
+            -o IdentitiesOnly=yes \
+            -p "${PROD_SSH_PORT:-22}" \
+            "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
+            "mkdir -p '$PROD_DEPLOY_PATH'"
           rsync -az --delete \
+            -e "ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -p ${PROD_SSH_PORT:-22}" \
             --exclude '.git' \
             --exclude 'node_modules' \
             --exclude '.env' \
@@ -98,10 +117,20 @@ jobs:
           printf '%s' "$PROD_OPENAI_API_KEY" > .deploy-secrets/infra/docker/secrets/openai_api_key.txt
           chmod 600 .deploy-secrets/.env.production .deploy-secrets/infra/docker/secrets/*.txt
 
-          ssh -p "${PROD_SSH_PORT:-22}" "${PROD_SSH_USER}@${PROD_SSH_HOST}" "mkdir -p '$PROD_DEPLOY_PATH/infra/docker/secrets'"
-          rsync -az .deploy-secrets/.env.production "${PROD_SSH_USER}@${PROD_SSH_HOST}:${PROD_DEPLOY_PATH}/.env.production"
-          rsync -az .deploy-secrets/infra/docker/secrets/ "${PROD_SSH_USER}@${PROD_SSH_HOST}:${PROD_DEPLOY_PATH}/infra/docker/secrets/"
-          ssh -p "${PROD_SSH_PORT:-22}" "${PROD_SSH_USER}@${PROD_SSH_HOST}" "chmod 600 '$PROD_DEPLOY_PATH/.env.production' '$PROD_DEPLOY_PATH'/infra/docker/secrets/*.txt"
+          ssh \
+            -i ~/.ssh/id_ed25519 \
+            -o IdentitiesOnly=yes \
+            -p "${PROD_SSH_PORT:-22}" \
+            "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
+            "mkdir -p '$PROD_DEPLOY_PATH/infra/docker/secrets'"
+          rsync -az -e "ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -p ${PROD_SSH_PORT:-22}" .deploy-secrets/.env.production "${PROD_SSH_USER}@${PROD_SSH_HOST}:${PROD_DEPLOY_PATH}/.env.production"
+          rsync -az -e "ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -p ${PROD_SSH_PORT:-22}" .deploy-secrets/infra/docker/secrets/ "${PROD_SSH_USER}@${PROD_SSH_HOST}:${PROD_DEPLOY_PATH}/infra/docker/secrets/"
+          ssh \
+            -i ~/.ssh/id_ed25519 \
+            -o IdentitiesOnly=yes \
+            -p "${PROD_SSH_PORT:-22}" \
+            "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
+            "chmod 600 '$PROD_DEPLOY_PATH/.env.production' '$PROD_DEPLOY_PATH'/infra/docker/secrets/*.txt"
 
       - name: Deploy on server
         env:
@@ -111,4 +140,9 @@ jobs:
           PROD_DEPLOY_PATH: ${{ vars.PROD_DEPLOY_PATH }}
           RUN_SEED_ON_DEPLOY: ${{ github.event.inputs.run_seed || vars.RUN_SEED_ON_DEPLOY || 'false' }}
         run: |
-          ssh -p "${PROD_SSH_PORT:-22}" "${PROD_SSH_USER}@${PROD_SSH_HOST}" "cd '$PROD_DEPLOY_PATH' && RUN_SEED_ON_DEPLOY='${RUN_SEED_ON_DEPLOY}' ./scripts/deploy-prod.sh '$PROD_DEPLOY_PATH'"
+          ssh \
+            -i ~/.ssh/id_ed25519 \
+            -o IdentitiesOnly=yes \
+            -p "${PROD_SSH_PORT:-22}" \
+            "${PROD_SSH_USER}@${PROD_SSH_HOST}" \
+            "cd '$PROD_DEPLOY_PATH' && RUN_SEED_ON_DEPLOY='${RUN_SEED_ON_DEPLOY}' ./scripts/deploy-prod.sh '$PROD_DEPLOY_PATH'"
