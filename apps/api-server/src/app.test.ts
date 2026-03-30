@@ -307,6 +307,10 @@ async function invokeRoute(
       this.body = payload;
       return this;
     },
+    sendFile(filePath: string) {
+      this.body = { filePath };
+      return this;
+    },
     redirect(location: string) {
       this.statusCode = 302;
       this.body = { location };
@@ -345,6 +349,27 @@ describe("API server auth model", () => {
       authenticated: false,
       loginUrl: "/auth/login"
     });
+  });
+
+  it("redirects anonymous browser requests for the operator console to Auth0 login", async () => {
+    const app = createApp();
+    const response = await invokeRoute(app, "get", "/operator");
+
+    expect(response.statusCode).toBe(302);
+    expect(response.body).toEqual({
+      location: "/auth/login"
+    });
+  });
+
+  it("serves the operator console only to authenticated operator sessions", async () => {
+    const app = createApp();
+    const response = await invokeRoute(app, "get", "/operator", {
+      headers: {
+        authorization: "Bearer operator-valid"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
   });
 
   it("uses the tenant from the operator session rather than a spoofed header", async () => {

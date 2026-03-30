@@ -60,6 +60,23 @@ async function authenticateOperator(req: express.Request, res: express.Response,
   }
 }
 
+async function authenticateOperatorPage(req: express.Request, res: express.Response, next: express.NextFunction) {
+  try {
+    const token = extractBearerToken(req.headers as Record<string, string | string[] | undefined>, getCookies(req));
+
+    if (!token) {
+      res.redirect("/auth/login");
+      return;
+    }
+
+    req.operatorSession = await authenticateToken(token);
+    req.tenantId = req.operatorSession.tenantId;
+    next();
+  } catch (_error) {
+    res.redirect("/auth/login");
+  }
+}
+
 function requireOperatorPermission(permission: OperatorPermission, options?: { requireFreshMfa?: boolean }) {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const session = req.operatorSession;
@@ -206,7 +223,7 @@ export function createApp(): express.Express {
 
   app.use("/operator/assets", express.static(path.join(operatorUiPath, "assets")));
 
-  app.get("/operator", (_req, res) => {
+  app.get("/operator", authenticateOperatorPage, requireOperatorPermission("tickets:read"), (_req, res) => {
     res.sendFile(path.join(operatorUiPath, "index.html"));
   });
 
