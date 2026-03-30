@@ -15,11 +15,11 @@ echo "Starting core infrastructure"
 compose up -d postgres temporal
 
 echo "Running database migrations"
-compose run --rm api pnpm prisma:migrate
+compose run --rm api sh -lc 'export DATABASE_URL="$(cat /run/secrets/database_url)" && pnpm prisma:migrate'
 
 if [[ "${RUN_SEED_ON_DEPLOY:-false}" == "true" ]]; then
   echo "Running seed data"
-  compose run --rm api pnpm prisma:seed
+  compose run --rm api sh -lc 'export DATABASE_URL="$(cat /run/secrets/database_url)" && pnpm prisma:seed'
 fi
 
 echo "Starting application services"
