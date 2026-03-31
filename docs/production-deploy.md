@@ -187,13 +187,20 @@ At minimum for Daniel:
 
 ### 5. Post-Login Action
 
-Add a Post-Login Action that copies Auth0 org roles into the access token claim expected by the app:
+Add a Post-Login Action that copies Auth0 org roles and tenant context into the access token claims expected by the app:
 
 ```js
 exports.onExecutePostLogin = async (event, api) => {
   const namespace = 'https://agentic-service-provider';
   const roles = event.authorization?.roles || [];
   api.accessToken.setCustomClaim(`${namespace}/roles`, roles);
+  if (event.organization?.id) {
+    api.accessToken.setCustomClaim(`${namespace}/org_id`, event.organization.id);
+  }
+  if (event.organization?.name) {
+    api.accessToken.setCustomClaim(`${namespace}/org_name`, event.organization.name);
+    api.accessToken.setCustomClaim(`${namespace}/tenant_id`, event.organization.name);
+  }
 };
 ```
 

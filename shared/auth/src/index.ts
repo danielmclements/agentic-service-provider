@@ -17,6 +17,16 @@ type JwtPayload = Record<string, unknown> & {
   name?: string;
 };
 
+function getStringClaim(payload: JwtPayload, ...claimNames: string[]) {
+  for (const claimName of claimNames) {
+    if (typeof payload[claimName] === "string") {
+      return payload[claimName] as string;
+    }
+  }
+
+  return undefined;
+}
+
 type Jwk = {
   kid?: string;
   kty?: string;
@@ -263,19 +273,25 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
   const payload = await validateTokenSignature(token);
   const userId = typeof payload.sub === "string" ? payload.sub : undefined;
   const sessionId = typeof payload.sid === "string" ? payload.sid : undefined;
-  const orgId = typeof payload.org_id === "string" ? payload.org_id : undefined;
-  const orgName = typeof payload.org_name === "string" ? payload.org_name : undefined;
+  const orgId = getStringClaim(payload, "org_id", "https://agentic-service-provider/org_id");
+  const orgName = getStringClaim(payload, "org_name", "https://agentic-service-provider/org_name");
+  const tenantClaim = getStringClaim(payload, env.AUTH0_TENANT_CLAIM);
   const roles = coerceRoles(payload[env.AUTH0_ROLES_CLAIM]);
   const claimedPermissions = coercePermissions(payload[env.AUTH0_PERMISSIONS_CLAIM]);
   const authTime = typeof payload.auth_time === "number" ? payload.auth_time : payload.iat ?? Math.floor(Date.now() / 1000);
   const amr = Array.isArray(payload.amr) ? payload.amr.filter((item): item is string => typeof item === "string") : [];
 
-  if (!userId || !sessionId || (!orgId && !orgName)) {
-    throw new Error("Bearer token is missing required Auth0 organization claims");
+  if (!userId || !sessionId || (!orgId && !orgName && !tenantClaim)) {
+    throw new Error("Bearer token is missing required Auth0 organization or tenant claims");
   }
 
-  const authConnectionWhere =
-    orgId && orgName
+  const authConnectionWhere = tenantClaim
+    ? {
+        tenant: {
+          OR: [{ id: tenantClaim }, { slug: tenantClaim }]
+        }
+      }
+    : orgId && orgName
       ? {
           OR: [{ auth0OrganizationId: orgId }, { auth0OrganizationName: orgName }]
         }
