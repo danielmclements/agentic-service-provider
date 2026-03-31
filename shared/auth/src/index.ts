@@ -344,13 +344,38 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
     throw new Error("Authenticated user is inactive");
   }
 
-  const membership = await prisma.tenantMembership.findFirst({
+  let membership = await prisma.tenantMembership.findFirst({
     where: {
       tenantId: authConnection.tenantId,
       userId: user.id,
       active: true
     }
   });
+
+  if (!membership && typeof payload.email === "string") {
+    const matchingMemberships = await prisma.tenantMembership.findMany({
+      where: {
+        tenantId: authConnection.tenantId,
+        active: true,
+        email: {
+          equals: payload.email,
+          mode: "insensitive"
+        }
+      }
+    });
+
+    if (matchingMemberships.length === 1) {
+      membership = await prisma.tenantMembership.update({
+        where: { id: matchingMemberships[0].id },
+        data: {
+          userId: user.id,
+          auth0OrgId: orgId ?? defaultOrganization ?? authConnection.auth0OrganizationId,
+          email: payload.email,
+          displayName: typeof payload.name === "string" ? payload.name : matchingMemberships[0].displayName
+        }
+      });
+    }
+  }
 
   if (!membership) {
     throw new Error("Authenticated user is not a member of the tenant");
