@@ -1,7 +1,10 @@
-import { prisma } from "@asp/config";
+import { env, prisma } from "@asp/config";
 import { ActionType, PolicyDecision } from "@prisma/client";
 
 async function seed() {
+  const auth0OrganizationId = env.AUTH0_DEFAULT_ORGANIZATION ?? "org_acme";
+  const auth0OrganizationName = "acme";
+
   const tenant = await prisma.tenant.upsert({
     where: { slug: "acme" },
     update: {},
@@ -63,14 +66,14 @@ async function seed() {
   });
 
   await prisma.tenantAuthConnection.upsert({
-    where: { auth0OrganizationId: "org_acme" },
+    where: { auth0OrganizationId },
     update: {
-      auth0OrganizationName: "acme"
+      auth0OrganizationName
     },
     create: {
       tenantId: tenant.id,
-      auth0OrganizationId: "org_acme",
-      auth0OrganizationName: "acme",
+      auth0OrganizationId,
+      auth0OrganizationName,
       displayName: "Acme Workforce",
       strategy: "OIDC",
       connectionName: "acme-entra",
@@ -89,7 +92,7 @@ async function seed() {
     create: {
       tenantId: tenant.id,
       userId: operatorAdminUser.id,
-      auth0OrgId: "org_acme",
+      auth0OrgId: auth0OrganizationId,
       email: "operator@acme.com",
       displayName: "Acme Operator",
       role: "TENANT_ADMIN",
@@ -115,7 +118,7 @@ async function seed() {
     update: {
       email: "daniel.clements@acme.com",
       displayName: "Daniel Clements",
-      auth0OrgId: "org_acme",
+      auth0OrgId: auth0OrganizationId,
       role: "TENANT_ADMIN",
       permissions: [
         "tickets:read",
@@ -131,7 +134,7 @@ async function seed() {
     create: {
       tenantId: tenant.id,
       userId: danielUser.id,
-      auth0OrgId: "org_acme",
+      auth0OrgId: auth0OrganizationId,
       email: "daniel.clements@acme.com",
       displayName: "Daniel Clements",
       role: "TENANT_ADMIN",
