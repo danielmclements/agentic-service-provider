@@ -52,7 +52,7 @@ chmod 600 infra/docker/secrets/*.txt
 - `AUTH0_CLIENT_ID=<Auth0 Regular Web App client id>`
 - `AUTH0_CALLBACK_URL=https://ops.danielclements.me/auth/callback`
 - `AUTH0_LOGOUT_URL=https://ops.danielclements.me/operator`
-- `AUTH0_DEFAULT_ORGANIZATION=acme`
+- `AUTH0_DEFAULT_ORGANIZATION=<your Auth0 organization id, for example org_123456789>`
 - `AUTH0_JWT_ALGORITHMS=RS256`
 - `AUTH0_JWKS_URL=https://<your-tenant>/.well-known/jwks.json`
 
@@ -156,9 +156,11 @@ You can keep localhost values during rollout if you still want local testing.
 
 ### 3. Organization
 
-Use the organization slug:
+Use the Auth0 organization for the customer tenant, and set the application env var to the organization id:
 
-- `acme`
+- `AUTH0_DEFAULT_ORGANIZATION=<org_...>`
+
+The current `/authorize` flow sends `organization` to Auth0, and in this tenant that value must be the organization id, not the slug.
 
 Make sure Daniel is a member of that organization and has the right org role.
 
