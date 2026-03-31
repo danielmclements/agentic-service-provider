@@ -20,10 +20,10 @@ This repo now includes a production-oriented Compose stack with:
 
 ## Files To Create On The Server
 
-1. Copy the production env template:
+1. Copy the checked-in production env file:
 
 ```bash
-cp .env.production.example .env.production
+cp deploy/env/production.env .env.production
 ln -sfn .env.production .env
 ```
 
@@ -38,14 +38,13 @@ printf '%s' 'replace-with-openai-api-key-or-leave-empty' > infra/docker/secrets/
 chmod 600 infra/docker/secrets/*.txt
 ```
 
-3. Update `.env.production`:
+3. Review `.env.production` and update any deployment-specific non-secret values:
 
 - `OPS_DOMAIN=ops.danielclements.me`
 - `TEMPORAL_DOMAIN=temporal.danielclements.me`
 - `CADDY_EMAIL=<email for LetsEncrypt notices>`
 - `TEMPORAL_ALLOWED_CIDRS=<your public IP or office CIDR>`
 - `TEMPORAL_BASICAUTH_USERNAME=<admin username>`
-- `TEMPORAL_BASICAUTH_PASSWORD_HASH=<output of caddy hash-password>`
 - `AUTH0_DOMAIN=<your Auth0 tenant>`
 - `AUTH0_AUDIENCE=https://agentic-service-provider/api`
 - `AUTH0_ISSUER=https://<your-tenant>/`
@@ -62,7 +61,13 @@ Generate the Temporal UI password hash with:
 docker run --rm caddy:2.9-alpine caddy hash-password --plaintext 'replace-me'
 ```
 
-When you place that bcrypt hash into `.env.production` or the `PROD_ENV_FILE` GitHub secret, escape every `$` as `$$` so Docker Compose does not treat the hash as variable interpolation.
+For manual server setup, append that bcrypt hash to `.env.production` as:
+
+```bash
+printf '\nTEMPORAL_BASICAUTH_PASSWORD_HASH=%s\n' '$$2a$$...' >> .env.production
+```
+
+For GitHub Actions deploys, store that bcrypt hash in the GitHub production secret `PROD_TEMPORAL_BASICAUTH_PASSWORD_HASH`. Escape every `$` as `$$` so Docker Compose does not treat the hash as variable interpolation.
 
 The `.env` symlink keeps plain `docker compose -f infra/docker/docker-compose.prod.yml ...` commands from warning about unset variables during interpolation. If you prefer not to use the symlink, pass `--env-file .env.production` on every production Compose command instead.
 
@@ -105,15 +110,17 @@ Set these GitHub environment secrets:
 - `PROD_SSH_USER`
 - `PROD_SSH_PRIVATE_KEY`
 - `PROD_SSH_KNOWN_HOSTS`
-- `PROD_ENV_FILE`
 - `PROD_DATABASE_URL`
 - `PROD_POSTGRES_PASSWORD`
 - `PROD_AUTH0_CLIENT_SECRET`
 - `PROD_OPENAI_API_KEY`
+- `PROD_TEMPORAL_BASICAUTH_PASSWORD_HASH`
 
-`PROD_ENV_FILE` should contain the full contents of `.env.production`, based on:
+Production non-secret config now lives in the repo at:
 
-- [`.env.production.example`](/Users/danielclements/Documents/DevProjects/agentic-service-provider/.env.production.example)
+- [`production.env`](/Users/danielclements/Documents/DevProjects/agentic-service-provider/deploy/env/production.env)
+
+The workflow copies that file to the server as `.env.production` and appends the Temporal UI basic-auth hash from `PROD_TEMPORAL_BASICAUTH_PASSWORD_HASH`.
 
 The workflow runs on every push to `main` and can also be triggered manually.
 

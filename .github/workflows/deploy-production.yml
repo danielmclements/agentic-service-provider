@@ -106,15 +106,17 @@ jobs:
           PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
           PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
           PROD_DEPLOY_PATH: ${{ vars.PROD_DEPLOY_PATH }}
-          PROD_ENV_FILE: ${{ secrets.PROD_ENV_FILE }}
           PROD_DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
           PROD_POSTGRES_PASSWORD: ${{ secrets.PROD_POSTGRES_PASSWORD }}
           PROD_AUTH0_CLIENT_SECRET: ${{ secrets.PROD_AUTH0_CLIENT_SECRET }}
           PROD_OPENAI_API_KEY: ${{ secrets.PROD_OPENAI_API_KEY }}
+          PROD_TEMPORAL_BASICAUTH_PASSWORD_HASH: ${{ secrets.PROD_TEMPORAL_BASICAUTH_PASSWORD_HASH }}
         run: |
           rm -rf .deploy-secrets
           mkdir -p .deploy-secrets/infra/docker/secrets
-          printf '%s' "$PROD_ENV_FILE" > .deploy-secrets/.env.production
+          cp deploy/env/production.env .deploy-secrets/.env.production
+          test -n "$PROD_TEMPORAL_BASICAUTH_PASSWORD_HASH"
+          printf '\nTEMPORAL_BASICAUTH_PASSWORD_HASH=%s\n' "$PROD_TEMPORAL_BASICAUTH_PASSWORD_HASH" >> .deploy-secrets/.env.production
           printf '%s' "$PROD_DATABASE_URL" > .deploy-secrets/infra/docker/secrets/database_url.txt
           printf '%s' "$PROD_POSTGRES_PASSWORD" > .deploy-secrets/infra/docker/secrets/postgres_password.txt
           printf '%s' "$PROD_AUTH0_CLIENT_SECRET" > .deploy-secrets/infra/docker/secrets/auth0_client_secret.txt
