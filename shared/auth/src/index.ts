@@ -276,12 +276,13 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
   const orgId = getStringClaim(payload, "org_id", "https://agentic-service-provider/org_id");
   const orgName = getStringClaim(payload, "org_name", "https://agentic-service-provider/org_name");
   const tenantClaim = getStringClaim(payload, env.AUTH0_TENANT_CLAIM);
+  const defaultOrganization = env.AUTH0_DEFAULT_ORGANIZATION;
   const roles = coerceRoles(payload[env.AUTH0_ROLES_CLAIM]);
   const claimedPermissions = coercePermissions(payload[env.AUTH0_PERMISSIONS_CLAIM]);
   const authTime = typeof payload.auth_time === "number" ? payload.auth_time : payload.iat ?? Math.floor(Date.now() / 1000);
   const amr = Array.isArray(payload.amr) ? payload.amr.filter((item): item is string => typeof item === "string") : [];
 
-  if (!userId || !sessionId || (!orgId && !orgName && !tenantClaim)) {
+  if (!userId || !sessionId || (!orgId && !orgName && !tenantClaim && !defaultOrganization)) {
     throw new Error("Bearer token is missing required Auth0 organization or tenant claims");
   }
 
@@ -291,6 +292,10 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
           OR: [{ id: tenantClaim }, { slug: tenantClaim }]
         }
       }
+    : defaultOrganization && !orgId && !orgName
+      ? {
+          OR: [{ auth0OrganizationId: defaultOrganization }, { auth0OrganizationName: defaultOrganization }]
+        }
     : orgId && orgName
       ? {
           OR: [{ auth0OrganizationId: orgId }, { auth0OrganizationName: orgName }]
@@ -360,7 +365,7 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
       tenantId: authConnection.tenantId,
       membershipId: membership.id,
       userId: user.id,
-      auth0OrganizationId: orgId ?? authConnection.auth0OrganizationId,
+      auth0OrganizationId: orgId ?? defaultOrganization ?? authConnection.auth0OrganizationId,
       sessionId,
       email: typeof payload.email === "string" ? payload.email : membership.email,
       displayName: typeof payload.name === "string" ? payload.name : membership.displayName,
@@ -388,7 +393,7 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
     email: typeof payload.email === "string" ? payload.email : membership.email ?? undefined,
     displayName: typeof payload.name === "string" ? payload.name : membership.displayName ?? undefined,
     sessionId,
-    auth0OrganizationId: orgId ?? authConnection.auth0OrganizationId,
+    auth0OrganizationId: orgId ?? defaultOrganization ?? authConnection.auth0OrganizationId,
     tenantId: authConnection.tenantId,
     tenantSlug: authConnection.tenant.slug,
     tenantName: authConnection.tenant.name,
