@@ -5,6 +5,7 @@ import { AuthenticatedSession, OPERATOR_PERMISSIONS, OPERATOR_ROLES, OperatorPer
 type JwtPayload = Record<string, unknown> & {
   sub?: string;
   sid?: string;
+  jti?: string;
   org_id?: string;
   org_name?: string;
   iss?: string;
@@ -77,6 +78,18 @@ function parseJwt(token: string) {
     payload: parseJson<JwtPayload>(fromBase64Url(encodedPayload).toString("utf8")),
     signature: fromBase64Url(encodedSignature)
   };
+}
+
+function deriveSessionId(token: string, payload: JwtPayload) {
+  if (typeof payload.sid === "string" && payload.sid.length > 0) {
+    return payload.sid;
+  }
+
+  if (typeof payload.jti === "string" && payload.jti.length > 0) {
+    return `jti:${payload.jti}`;
+  }
+
+  return `tok:${crypto.createHash("sha256").update(token).digest("hex")}`;
 }
 
 function verifyHs256(signingInput: string, signature: Buffer) {
@@ -272,7 +285,7 @@ export function serializeCookie(name: string, value: string, options: { maxAge?:
 export async function authenticateToken(token: string): Promise<AuthenticatedSession> {
   const payload = await validateTokenSignature(token);
   const userId = typeof payload.sub === "string" ? payload.sub : undefined;
-  const sessionId = typeof payload.sid === "string" ? payload.sid : undefined;
+  const sessionId = deriveSessionId(token, payload);
   const orgId = getStringClaim(payload, "org_id", "https://agentic-service-provider/org_id");
   const orgName = getStringClaim(payload, "org_name", "https://agentic-service-provider/org_name");
   const tenantClaim = getStringClaim(payload, env.AUTH0_TENANT_CLAIM);
@@ -282,7 +295,7 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
   const authTime = typeof payload.auth_time === "number" ? payload.auth_time : payload.iat ?? Math.floor(Date.now() / 1000);
   const amr = Array.isArray(payload.amr) ? payload.amr.filter((item): item is string => typeof item === "string") : [];
 
-  if (!userId || !sessionId || (!orgId && !orgName && !tenantClaim && !defaultOrganization)) {
+  if (!userId || (!orgId && !orgName && !tenantClaim && !defaultOrganization)) {
     throw new Error("Bearer token is missing required Auth0 organization or tenant claims");
   }
 
