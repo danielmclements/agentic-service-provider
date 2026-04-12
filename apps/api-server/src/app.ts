@@ -1,8 +1,7 @@
-import crypto from "node:crypto";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import path from "node:path";
-import { authenticateServiceToken, authenticateToken, buildAuthorizeUrl, createPkcePair, extractBearerToken, hasFreshMfa, hasPermission, parseCookieHeader, serializeCookie } from "@asp/auth";
+import { authenticateOperatorSession, authenticateServiceToken, buildAuthorizeUrl, createOperatorSession, createPkcePair, extractBearerToken, hasFreshMfa, hasPermission, parseCookieHeader, serializeCookie, validateIdToken } from "@asp/auth";
 import { prisma, env } from "@asp/config";
 import { AuditLogService } from "@asp/audit-log";
 import { ApprovalService } from "@asp/approval-service";
@@ -43,16 +42,20 @@ function getCookies(req: express.Request) {
   return parseCookieHeader(req.header("cookie"));
 }
 
+function getSessionId(req: express.Request) {
+  return getCookies(req)[env.SESSION_COOKIE_NAME];
+}
+
 async function authenticateOperator(req: express.Request, res: express.Response, next: express.NextFunction) {
   try {
-    const token = extractBearerToken(req.headers as Record<string, string | string[] | undefined>, getCookies(req));
+    const sessionId = getSessionId(req);
 
-    if (!token) {
+    if (!sessionId) {
       unauthorized(res, "Operator session required", { loginUrl: "/auth/login" });
       return;
     }
 
-    req.operatorSession = await authenticateToken(token);
+    req.operatorSession = await authenticateOperatorSession(sessionId);
     req.tenantId = req.operatorSession.tenantId;
     next();
   } catch (error) {
@@ -62,14 +65,14 @@ async function authenticateOperator(req: express.Request, res: express.Response,
 
 async function authenticateOperatorPage(req: express.Request, res: express.Response, next: express.NextFunction) {
   try {
-    const token = extractBearerToken(req.headers as Record<string, string | string[] | undefined>, getCookies(req));
+    const sessionId = getSessionId(req);
 
-    if (!token) {
+    if (!sessionId) {
       res.redirect("/auth/login");
       return;
     }
 
-    req.operatorSession = await authenticateToken(token);
+    req.operatorSession = await authenticateOperatorSession(sessionId);
     req.tenantId = req.operatorSession.tenantId;
     next();
   } catch (_error) {
@@ -105,23 +108,23 @@ function requireOperatorPermission(permission: OperatorPermission, options?: { r
 
 async function authenticateApiCaller(req: express.Request, res: express.Response, next: express.NextFunction) {
   try {
-    const token = extractBearerToken(req.headers as Record<string, string | string[] | undefined>, getCookies(req));
-
-    if (!token) {
-      unauthorized(res, "Bearer token required");
-      return;
-    }
-
-    try {
-      req.operatorSession = await authenticateToken(token);
+    const sessionId = getSessionId(req);
+    if (sessionId) {
+      req.operatorSession = await authenticateOperatorSession(sessionId);
       req.tenantId = req.operatorSession.tenantId;
       next();
       return;
-    } catch (_operatorError) {
-      req.servicePrincipal = await authenticateServiceToken(token);
-      req.tenantId = await resolveTenantId(req.servicePrincipal.tenantId);
-      next();
     }
+
+    const token = extractBearerToken(req.headers as Record<string, string | string[] | undefined>);
+    if (!token) {
+      unauthorized(res, "Authenticated caller required");
+      return;
+    }
+
+    req.servicePrincipal = await authenticateServiceToken(token);
+    req.tenantId = await resolveTenantId(req.servicePrincipal.tenantId);
+    next();
   } catch (error) {
     unauthorized(res, error instanceof Error ? error.message : "API authentication failed");
   }
@@ -164,6 +167,10 @@ function createNonceCookie(value: string) {
   return serializeCookie(env.AUTH_NONCE_COOKIE_NAME, value, { maxAge: 600 });
 }
 
+function createOrganizationCookie(value: string) {
+  return serializeCookie(env.AUTH_ORGANIZATION_COOKIE_NAME, value, { maxAge: 600 });
+}
+
 function clearCookie(name: string) {
   return serializeCookie(name, "", { maxAge: 0 });
 }
@@ -188,7 +195,7 @@ async function exchangeAuthorizationCode(code: string, codeVerifier: string) {
     throw new Error(`Token exchange failed with status ${response.status}`);
   }
 
-  return (await response.json()) as { access_token: string };
+  return (await response.json()) as { access_token?: string; id_token?: string };
 }
 
 declare global {
@@ -229,14 +236,15 @@ export function createApp(): express.Express {
 
   app.get("/auth/login", (req, res) => {
     const { codeVerifier, codeChallenge, state, nonce } = createPkcePair();
+    const organization = typeof req.query.organization === "string" ? req.query.organization : env.AUTH0_DEFAULT_ORGANIZATION;
     res.setHeader("Set-Cookie", [
       createCodeVerifierCookie(codeVerifier),
       createStateCookie(state),
-      createNonceCookie(nonce)
+      createNonceCookie(nonce),
+      organization ? createOrganizationCookie(organization) : clearCookie(env.AUTH_ORGANIZATION_COOKIE_NAME)
     ]);
 
     const prompt = typeof req.query.prompt === "string" ? req.query.prompt : undefined;
-    const organization = typeof req.query.organization === "string" ? req.query.organization : undefined;
     res.redirect(buildAuthorizeUrl({ codeChallenge, state, nonce, organization, prompt }));
   });
 
@@ -252,19 +260,28 @@ export function createApp(): express.Express {
       }
 
       const codeVerifier = cookies[env.AUTH_CODE_VERIFIER_COOKIE_NAME];
+      const nonce = cookies[env.AUTH_NONCE_COOKIE_NAME];
+      const organization = cookies[env.AUTH_ORGANIZATION_COOKIE_NAME] || env.AUTH0_DEFAULT_ORGANIZATION;
       if (!codeVerifier) {
         unauthorized(res, "Missing PKCE verifier");
         return;
       }
 
       const tokenResponse = await exchangeAuthorizationCode(code, codeVerifier);
-      await authenticateToken(tokenResponse.access_token);
+      if (!tokenResponse.id_token) {
+        unauthorized(res, "ID token was not returned by Auth0");
+        return;
+      }
+
+      const identity = await validateIdToken(tokenResponse.id_token, nonce);
+      const operatorSession = await createOperatorSession(identity, organization);
 
       res.setHeader("Set-Cookie", [
-        serializeCookie(env.SESSION_COOKIE_NAME, tokenResponse.access_token, { maxAge: 60 * 60 * 8 }),
+        serializeCookie(env.SESSION_COOKIE_NAME, operatorSession.sessionId, { maxAge: 60 * 60 * 8 }),
         clearCookie(env.AUTH_CODE_VERIFIER_COOKIE_NAME),
         clearCookie(env.AUTH_STATE_COOKIE_NAME),
-        clearCookie(env.AUTH_NONCE_COOKIE_NAME)
+        clearCookie(env.AUTH_NONCE_COOKIE_NAME),
+        clearCookie(env.AUTH_ORGANIZATION_COOKIE_NAME)
       ]);
       res.redirect("/operator");
     } catch (error) {
@@ -272,11 +289,14 @@ export function createApp(): express.Express {
     }
   });
 
-  app.post("/auth/logout", authenticateOperator, async (req, res) => {
-    await prisma.operatorSession.updateMany({
-      where: { sessionId: req.operatorSession!.sessionId },
-      data: { revokedAt: new Date() }
-    });
+  app.post("/auth/logout", async (req, res) => {
+    const sessionId = getSessionId(req);
+    if (sessionId) {
+      await prisma.operatorSession.updateMany({
+        where: { sessionId },
+        data: { revokedAt: new Date() }
+      });
+    }
 
     res.setHeader("Set-Cookie", clearCookie(env.SESSION_COOKIE_NAME));
     res.json({
@@ -289,13 +309,13 @@ export function createApp(): express.Express {
 
   app.get("/api/session", async (req, res) => {
     try {
-      const token = extractBearerToken(req.headers as Record<string, string | string[] | undefined>, getCookies(req));
-      if (!token) {
+      const sessionId = getSessionId(req);
+      if (!sessionId) {
         res.json({ authenticated: false, loginUrl: "/auth/login" });
         return;
       }
 
-      const session = await authenticateToken(token);
+      const session = await authenticateOperatorSession(sessionId);
       res.json({
         authenticated: true,
         session

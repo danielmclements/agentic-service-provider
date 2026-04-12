@@ -68,7 +68,8 @@ const envSchema = z.object({
   SESSION_COOKIE_NAME: z.string().default("asp_operator_session"),
   AUTH_STATE_COOKIE_NAME: z.string().default("asp_auth_state"),
   AUTH_CODE_VERIFIER_COOKIE_NAME: z.string().default("asp_auth_code_verifier"),
-  AUTH_NONCE_COOKIE_NAME: z.string().default("asp_auth_nonce")
+  AUTH_NONCE_COOKIE_NAME: z.string().default("asp_auth_nonce"),
+  AUTH_ORGANIZATION_COOKIE_NAME: z.string().default("asp_auth_organization")
 });
 
 export const env = envSchema.parse(process.env);

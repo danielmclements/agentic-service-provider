@@ -10,6 +10,19 @@ This repo now includes a production-oriented Compose stack with:
 - proxy-aware application rate limiting
 - IP filtering plus basic auth for Temporal UI
 
+## Operator Auth Architecture
+
+The operator console now uses a standard browser login flow:
+
+- the browser is redirected to Auth0 using Authorization Code Flow
+- Auth0 returns an `id_token` to `/auth/callback`
+- the API validates that ID token and creates a server-owned operator session
+- the browser stores only an opaque session cookie
+
+This is a deliberate change from the earlier token-in-cookie approach. The browser session no longer depends on custom access-token claims just to load `/operator`.
+
+The custom API audience (`https://agentic-service-provider/api`) is still used for bearer tokens that call the API directly, but it is no longer required for the basic browser login handshake.
+
 ## Server Prerequisites
 
 - Rocky Linux with Docker and Docker Compose
@@ -52,6 +65,7 @@ chmod 600 infra/docker/secrets/*.txt
 - `AUTH0_CALLBACK_URL=https://ops.danielclements.me/auth/callback`
 - `AUTH0_LOGOUT_URL=https://ops.danielclements.me/operator`
 - `AUTH0_DEFAULT_ORGANIZATION=<your Auth0 organization id, for example org_123456789>`
+- `AUTH0_DEFAULT_CONNECTION=<leave blank unless you intentionally want to force a specific Auth0 connection name>`
 - `AUTH0_JWT_ALGORITHMS=RS256`
 - `AUTH0_JWKS_URL=https://<your-tenant>/.well-known/jwks.json`
 
@@ -130,7 +144,34 @@ If you want seeds to run during a manual deploy, use the workflow input:
 
 ## Auth0 Console Changes
 
-### 1. API / Resource Server
+### 1. Regular Web Application
+
+Per Auth0's current application settings and authorization-code-flow docs, configure the Auth0 app as a `Regular Web Application` and use the production callback/origin values for the operator console.
+
+In the Auth0 application settings, set:
+
+- Allowed Callback URLs:
+  - `https://ops.danielclements.me/auth/callback`
+- Allowed Logout URLs:
+  - `https://ops.danielclements.me/operator`
+- Allowed Web Origins:
+  - `https://ops.danielclements.me`
+
+You can keep localhost values during rollout if you still want local testing.
+
+### 2. Organization
+
+Use the Auth0 organization for the customer tenant, and set the application env var to the organization id:
+
+- `AUTH0_DEFAULT_ORGANIZATION=<org_...>`
+
+The current `/authorize` flow sends `organization` to Auth0, and in this tenant that value must be the organization id, not the slug.
+
+Make sure the operator user is a member of that organization.
+
+`AUTH0_DEFAULT_CONNECTION` should usually be left blank. Only set it if you intentionally want Auth0 to force a specific connection by name.
+
+### 3. API / Resource Server
 
 Create or update the API with:
 
@@ -148,28 +189,9 @@ Required permissions:
 - `connectors:admin`
 - `tenants:admin`
 
-### 2. Regular Web Application
+This API configuration is required for bearer-token callers of the API. It is not required just to establish the browser session for `/operator`.
 
-In the Auth0 application settings, set:
-
-- Allowed Callback URLs:
-  - `https://ops.danielclements.me/auth/callback`
-- Allowed Logout URLs:
-  - `https://ops.danielclements.me/operator`
-- Allowed Web Origins:
-  - `https://ops.danielclements.me`
-
-You can keep localhost values during rollout if you still want local testing.
-
-### 3. Organization
-
-Use the Auth0 organization for the customer tenant, and set the application env var to the organization id:
-
-- `AUTH0_DEFAULT_ORGANIZATION=<org_...>`
-
-The current `/authorize` flow sends `organization` to Auth0, and in this tenant that value must be the organization id, not the slug.
-
-Make sure Daniel is a member of that organization and has the right org role.
+If a browser-based workflow later requests `audience=https://agentic-service-provider/api`, Auth0 client grants must also allow the application to access that API on the user's behalf.
 
 ### 4. Roles
 
@@ -187,7 +209,13 @@ At minimum for Daniel:
 
 ### 5. Post-Login Action
 
-Add a Post-Login Action that copies Auth0 org roles and tenant context into the access token claims expected by the app:
+No Post-Login Action is required for the browser login flow anymore.
+
+The operator console now authenticates the browser using the ID token plus a server-owned session, so `/operator` no longer depends on custom organization or tenant claims being injected into the browser token set.
+
+If you want extra custom claims for downstream APIs or future UI features, you can still add a Post-Login Action, but it is optional for operator sign-in.
+
+Example optional Action:
 
 ```js
 exports.onExecutePostLogin = async (event, api) => {
@@ -224,5 +252,7 @@ The current API expects that claim on service tokens.
 
 - JWKS rotation is now preferred over static `AUTH0_JWT_PUBLIC_KEY`.
 - `AUTH0_JWT_PUBLIC_KEY` still works as a fallback if needed during an incident.
+- Browser operator sessions now use an opaque cookie and the `OperatorSession` table instead of storing raw bearer tokens in cookies.
+- Tenant membership is resolved from application data (`TenantAuthConnection`, `User`, and `TenantMembership`) instead of requiring custom org claims on browser access tokens.
 - Postgres backups are written to the `backups-data` Docker volume as compressed `.sql.gz` dumps.
 - Temporal UI is protected by both Caddy basic auth and an IP allowlist.

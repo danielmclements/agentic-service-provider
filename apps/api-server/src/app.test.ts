@@ -99,7 +99,9 @@ vi.mock("@asp/config", () => ({
     SESSION_COOKIE_NAME: "asp_operator_session",
     AUTH_CODE_VERIFIER_COOKIE_NAME: "asp_auth_code_verifier",
     AUTH_STATE_COOKIE_NAME: "asp_auth_state",
-    AUTH_NONCE_COOKIE_NAME: "asp_auth_nonce"
+    AUTH_NONCE_COOKIE_NAME: "asp_auth_nonce",
+    AUTH_ORGANIZATION_COOKIE_NAME: "asp_auth_organization",
+    AUTH0_DEFAULT_ORGANIZATION: "org_acme"
   },
   prisma: {
     executionRun: {
@@ -132,19 +134,19 @@ vi.mock("@asp/auth", () => {
   };
 
   return {
-    authenticateToken: vi.fn(async (token: string) => {
-      if (token === "operator-valid") {
+    authenticateOperatorSession: vi.fn(async (sessionId: string) => {
+      if (sessionId === "operator-valid") {
         return operatorSession;
       }
 
-      if (token === "operator-readonly") {
+      if (sessionId === "operator-readonly") {
         return {
           ...operatorSession,
           permissions: ["approvals:read"]
         };
       }
 
-      if (token === "operator-stale") {
+      if (sessionId === "operator-stale") {
         return {
           ...operatorSession,
           amr: ["pwd"],
@@ -173,6 +175,14 @@ vi.mock("@asp/auth", () => {
 
       return undefined;
     }),
+    validateIdToken: vi.fn(async () => ({
+      userId: "auth0|alice",
+      email: "alice@example.com",
+      displayName: "Alice Admin",
+      authTime: 100,
+      amr: ["pwd", "mfa"]
+    })),
+    createOperatorSession: vi.fn(async () => operatorSession),
     hasPermission: vi.fn((session, permission) => session.permissions.includes(permission)),
     hasFreshMfa: vi.fn((session) => session.amr.includes("mfa") && session.mfaFreshUntil > Math.floor(Date.now() / 1000)),
     buildAuthorizeUrl: vi.fn(() => "https://example.us.auth0.com/authorize"),
@@ -182,7 +192,21 @@ vi.mock("@asp/auth", () => {
       state: "state",
       nonce: "nonce"
     })),
-    parseCookieHeader: vi.fn(() => ({})),
+    parseCookieHeader: vi.fn((header: string | undefined) => {
+      if (!header) {
+        return {};
+      }
+
+      return header.split(";").reduce<Record<string, string>>((acc, part) => {
+        const [key, ...rest] = part.trim().split("=");
+        if (!key) {
+          return acc;
+        }
+
+        acc[key] = rest.join("=");
+        return acc;
+      }, {});
+    }),
     serializeCookie: vi.fn((name: string, value: string) => `${name}=${value}`)
   };
 });
@@ -365,7 +389,7 @@ describe("API server auth model", () => {
     const app = createApp();
     const response = await invokeRoute(app, "get", "/operator", {
       headers: {
-        authorization: "Bearer operator-valid"
+        cookie: "asp_operator_session=operator-valid"
       }
     });
 
@@ -376,7 +400,7 @@ describe("API server auth model", () => {
     const app = createApp();
     const response = await invokeRoute(app, "get", "/api/operator-summary", {
       headers: {
-        authorization: "Bearer operator-valid",
+        cookie: "asp_operator_session=operator-valid",
         "x-tenant-id": "tenant-2"
       }
     });
@@ -389,7 +413,7 @@ describe("API server auth model", () => {
     const app = createApp();
     const response = await invokeRoute(app, "get", "/api/operator-summary", {
       headers: {
-        authorization: "Bearer operator-readonly"
+        cookie: "asp_operator_session=operator-readonly"
       }
     });
 
@@ -401,7 +425,7 @@ describe("API server auth model", () => {
     const app = createApp();
     const response = await invokeRoute(app, "post", "/api/approvals/:id/decision", {
       headers: {
-        authorization: "Bearer operator-stale"
+        cookie: "asp_operator_session=operator-stale"
       },
       params: {
         id: "approval-1"
@@ -421,7 +445,7 @@ describe("API server auth model", () => {
     const app = createApp();
     const response = await invokeRoute(app, "post", "/api/approvals/:id/decision", {
       headers: {
-        authorization: "Bearer operator-valid"
+        cookie: "asp_operator_session=operator-valid"
       },
       params: {
         id: "approval-1"

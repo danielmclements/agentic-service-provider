@@ -1,13 +1,10 @@
 import crypto from "node:crypto";
+import { Prisma } from "@prisma/client";
 import { env, prisma } from "@asp/config";
 import { AuthenticatedSession, OPERATOR_PERMISSIONS, OPERATOR_ROLES, OperatorPermission, OperatorRole, ServicePrincipalContext } from "@asp/types";
 
 type JwtPayload = Record<string, unknown> & {
   sub?: string;
-  sid?: string;
-  jti?: string;
-  org_id?: string;
-  org_name?: string;
   iss?: string;
   aud?: string | string[];
   exp?: number;
@@ -16,17 +13,17 @@ type JwtPayload = Record<string, unknown> & {
   amr?: string[];
   email?: string;
   name?: string;
+  nonce?: string;
+  azp?: string;
 };
 
-function getStringClaim(payload: JwtPayload, ...claimNames: string[]) {
-  for (const claimName of claimNames) {
-    if (typeof payload[claimName] === "string") {
-      return payload[claimName] as string;
-    }
-  }
-
-  return undefined;
-}
+export type OperatorIdentity = {
+  userId: string;
+  email?: string;
+  displayName?: string;
+  authTime: number;
+  amr: string[];
+};
 
 type Jwk = {
   kid?: string;
@@ -78,18 +75,6 @@ function parseJwt(token: string) {
     payload: parseJson<JwtPayload>(fromBase64Url(encodedPayload).toString("utf8")),
     signature: fromBase64Url(encodedSignature)
   };
-}
-
-function deriveSessionId(token: string, payload: JwtPayload) {
-  if (typeof payload.sid === "string" && payload.sid.length > 0) {
-    return payload.sid;
-  }
-
-  if (typeof payload.jti === "string" && payload.jti.length > 0) {
-    return `jti:${payload.jti}`;
-  }
-
-  return `tok:${crypto.createHash("sha256").update(token).digest("hex")}`;
 }
 
 function verifyHs256(signingInput: string, signature: Buffer) {
@@ -160,7 +145,7 @@ async function getJwksPublicKey(kid: string) {
   return publicKey;
 }
 
-async function validateTokenSignature(token: string) {
+async function validateJwtToken(token: string, expectedAudience: string, options?: { nonce?: string }) {
   const { header, payload, signature, signingInput } = parseJwt(token);
   const alg = String(header.alg ?? "");
   const allowed = env.AUTH0_JWT_ALGORITHMS.split(",").map((item) => item.trim()).filter(Boolean);
@@ -193,12 +178,16 @@ async function validateTokenSignature(token: string) {
 
   const audience = payload.aud;
   const audienceList = Array.isArray(audience) ? audience : audience ? [audience] : [];
-  if (!audienceList.includes(env.AUTH0_AUDIENCE)) {
+  if (!audienceList.includes(expectedAudience)) {
     throw new Error("Bearer token audience is invalid");
   }
 
   if (typeof payload.exp !== "number" || payload.exp * 1000 <= Date.now()) {
     throw new Error("Bearer token is expired");
+  }
+
+  if (options?.nonce && payload.nonce !== options.nonce) {
+    throw new Error("ID token nonce is invalid");
   }
 
   return payload;
@@ -234,14 +223,12 @@ function unionPermissions(roles: OperatorRole[], permissions: OperatorPermission
   return [...combined];
 }
 
-export function extractBearerToken(headers: Record<string, string | string[] | undefined>, cookies?: Record<string, string>) {
+export function extractBearerToken(headers: Record<string, string | string[] | undefined>) {
   const authorization = headers.authorization;
   const headerValue = Array.isArray(authorization) ? authorization[0] : authorization;
   if (headerValue?.startsWith("Bearer ")) {
     return headerValue.slice("Bearer ".length);
   }
-
-  return cookies?.[env.SESSION_COOKIE_NAME];
 }
 
 export function parseCookieHeader(header: string | undefined) {
@@ -282,43 +269,11 @@ export function serializeCookie(name: string, value: string, options: { maxAge?:
   return segments.join("; ");
 }
 
-export async function authenticateToken(token: string): Promise<AuthenticatedSession> {
-  const payload = await validateTokenSignature(token);
-  const userId = typeof payload.sub === "string" ? payload.sub : undefined;
-  const sessionId = deriveSessionId(token, payload);
-  const orgId = getStringClaim(payload, "org_id", "https://agentic-service-provider/org_id");
-  const orgName = getStringClaim(payload, "org_name", "https://agentic-service-provider/org_name");
-  const tenantClaim = getStringClaim(payload, env.AUTH0_TENANT_CLAIM);
-  const defaultOrganization = env.AUTH0_DEFAULT_ORGANIZATION;
-  const roles = coerceRoles(payload[env.AUTH0_ROLES_CLAIM]);
-  const claimedPermissions = coercePermissions(payload[env.AUTH0_PERMISSIONS_CLAIM]);
-  const authTime = typeof payload.auth_time === "number" ? payload.auth_time : payload.iat ?? Math.floor(Date.now() / 1000);
-  const amr = Array.isArray(payload.amr) ? payload.amr.filter((item): item is string => typeof item === "string") : [];
-
-  if (!userId || (!orgId && !orgName && !tenantClaim && !defaultOrganization)) {
-    throw new Error("Bearer token is missing required Auth0 organization or tenant claims");
-  }
-
-  const authConnectionWhere = tenantClaim
-    ? {
-        tenant: {
-          OR: [{ id: tenantClaim }, { slug: tenantClaim }]
-        }
-      }
-    : defaultOrganization && !orgId && !orgName
-      ? {
-          OR: [{ auth0OrganizationId: defaultOrganization }, { auth0OrganizationName: defaultOrganization }]
-        }
-    : orgId && orgName
-      ? {
-          OR: [{ auth0OrganizationId: orgId }, { auth0OrganizationName: orgName }]
-        }
-      : orgId
-        ? { auth0OrganizationId: orgId }
-        : { auth0OrganizationName: orgName! };
-
+async function resolveTenantAuthConnection(organization: string) {
   const authConnection = await prisma.tenantAuthConnection.findFirst({
-    where: authConnectionWhere,
+    where: {
+      OR: [{ auth0OrganizationId: organization }, { auth0OrganizationName: organization }]
+    },
     include: { tenant: true }
   });
 
@@ -326,17 +281,21 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
     throw new Error("No tenant is mapped to the provided Auth0 organization");
   }
 
+  return authConnection;
+}
+
+async function upsertUser(identity: OperatorIdentity) {
   const user = await prisma.user.upsert({
-    where: { auth0UserId: userId },
+    where: { auth0UserId: identity.userId },
     create: {
-      auth0UserId: userId,
-      email: typeof payload.email === "string" ? payload.email : null,
-      displayName: typeof payload.name === "string" ? payload.name : null,
+      auth0UserId: identity.userId,
+      email: identity.email ?? null,
+      displayName: identity.displayName ?? null,
       globalRoles: []
     },
     update: {
-      email: typeof payload.email === "string" ? payload.email : undefined,
-      displayName: typeof payload.name === "string" ? payload.name : undefined
+      email: identity.email,
+      displayName: identity.displayName
     }
   });
 
@@ -344,21 +303,26 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
     throw new Error("Authenticated user is inactive");
   }
 
+  return user;
+}
+
+async function resolveMembershipForLogin(userId: string, tenantId: string, email?: string, displayName?: string, auth0OrgId?: string) {
   let membership = await prisma.tenantMembership.findFirst({
     where: {
-      tenantId: authConnection.tenantId,
-      userId: user.id,
+      tenantId,
+      userId,
       active: true
     }
   });
 
-  if (!membership && typeof payload.email === "string") {
+  // Transitional bootstrap for pre-existing seeded memberships that were created before real Auth0 user IDs were known.
+  if (!membership && email) {
     const matchingMemberships = await prisma.tenantMembership.findMany({
       where: {
-        tenantId: authConnection.tenantId,
+        tenantId,
         active: true,
         email: {
-          equals: payload.email,
+          equals: email,
           mode: "insensitive"
         }
       }
@@ -368,10 +332,10 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
       membership = await prisma.tenantMembership.update({
         where: { id: matchingMemberships[0].id },
         data: {
-          userId: user.id,
-          auth0OrgId: orgId ?? defaultOrganization ?? authConnection.auth0OrganizationId,
-          email: payload.email,
-          displayName: typeof payload.name === "string" ? payload.name : matchingMemberships[0].displayName
+          userId,
+          auth0OrgId: auth0OrgId ?? matchingMemberships[0].auth0OrgId,
+          email,
+          displayName: displayName ?? matchingMemberships[0].displayName
         }
       });
     }
@@ -381,70 +345,168 @@ export async function authenticateToken(token: string): Promise<AuthenticatedSes
     throw new Error("Authenticated user is not a member of the tenant");
   }
 
-  const membershipRole = membership.role.toLowerCase() as OperatorRole;
-  const mergedRoles = Array.from(new Set<OperatorRole>([membershipRole, ...roles]));
-  const mergedPermissions = unionPermissions(
-    mergedRoles,
-    claimedPermissions.length ? claimedPermissions : (membership.permissions as OperatorPermission[] | undefined) ?? []
-  );
+  return membership;
+}
 
-  const revokedSession = await prisma.operatorSession.findUnique({
-    where: { sessionId },
-    select: { revokedAt: true }
-  });
+function buildAuthenticatedSession(input: {
+  sessionId: string;
+  auth0OrganizationId: string;
+  tenantId: string;
+  tenantSlug: string;
+  tenantName: string;
+  authTime: Date;
+  amr: unknown;
+  userId: string;
+  email?: string | null;
+  displayName?: string | null;
+  membershipRole: string;
+  membershipPermissions: unknown;
+}) {
+  const roles = [input.membershipRole.toLowerCase() as OperatorRole];
+  const permissions = unionPermissions(roles, coercePermissions(input.membershipPermissions));
+  const authTime = Math.floor(input.authTime.getTime() / 1000);
+  const amr = Array.isArray(input.amr) ? input.amr.filter((item): item is string => typeof item === "string") : [];
 
-  if (revokedSession?.revokedAt) {
-    throw new Error("Session has been revoked");
+  return {
+    userId: input.userId,
+    email: input.email ?? undefined,
+    displayName: input.displayName ?? undefined,
+    sessionId: input.sessionId,
+    auth0OrganizationId: input.auth0OrganizationId,
+    tenantId: input.tenantId,
+    tenantSlug: input.tenantSlug,
+    tenantName: input.tenantName,
+    roles,
+    permissions,
+    authTime,
+    amr,
+    mfaFreshUntil: authTime + env.AUTH0_MFA_FRESHNESS_SECONDS
+  } satisfies AuthenticatedSession;
+}
+
+export async function validateIdToken(idToken: string, nonce?: string): Promise<OperatorIdentity> {
+  const payload = await validateJwtToken(idToken, env.AUTH0_CLIENT_ID, { nonce });
+  const userId = typeof payload.sub === "string" ? payload.sub : undefined;
+
+  if (!userId) {
+    throw new Error("ID token is missing the subject claim");
   }
 
-  await prisma.operatorSession.upsert({
-    where: { sessionId },
-    create: {
+  return {
+    userId,
+    email: typeof payload.email === "string" ? payload.email : undefined,
+    displayName: typeof payload.name === "string" ? payload.name : undefined,
+    authTime: typeof payload.auth_time === "number" ? payload.auth_time : payload.iat ?? Math.floor(Date.now() / 1000),
+    amr: Array.isArray(payload.amr) ? payload.amr.filter((item): item is string => typeof item === "string") : []
+  };
+}
+
+export async function createOperatorSession(identity: OperatorIdentity, organization?: string): Promise<AuthenticatedSession> {
+  const selectedOrganization = organization ?? env.AUTH0_DEFAULT_ORGANIZATION;
+  if (!selectedOrganization) {
+    throw new Error("An Auth0 organization is required to create an operator session");
+  }
+
+  const authConnection = await resolveTenantAuthConnection(selectedOrganization);
+  const user = await upsertUser(identity);
+  const membership = await resolveMembershipForLogin(
+    user.id,
+    authConnection.tenantId,
+    identity.email,
+    identity.displayName,
+    authConnection.auth0OrganizationId
+  );
+
+  const sessionId = crypto.randomUUID();
+  await prisma.operatorSession.create({
+    data: {
       tenantId: authConnection.tenantId,
       membershipId: membership.id,
       userId: user.id,
-      auth0OrganizationId: orgId ?? defaultOrganization ?? authConnection.auth0OrganizationId,
+      auth0OrganizationId: authConnection.auth0OrganizationId,
       sessionId,
-      email: typeof payload.email === "string" ? payload.email : membership.email,
-      displayName: typeof payload.name === "string" ? payload.name : membership.displayName,
-      roles: mergedRoles,
-      permissions: mergedPermissions,
-      authTime: new Date(authTime * 1000),
-      amr,
-      lastSeenAt: new Date()
-    },
-    update: {
-      membershipId: membership.id,
-      userId: user.id,
-      email: typeof payload.email === "string" ? payload.email : membership.email,
-      displayName: typeof payload.name === "string" ? payload.name : membership.displayName,
-      roles: mergedRoles,
-      permissions: mergedPermissions,
-      authTime: new Date(authTime * 1000),
-      amr,
+      email: identity.email ?? membership.email,
+      displayName: identity.displayName ?? membership.displayName,
+      roles: [membership.role.toLowerCase()],
+      permissions: membership.permissions as Prisma.InputJsonValue,
+      authTime: new Date(identity.authTime * 1000),
+      amr: identity.amr,
       lastSeenAt: new Date()
     }
   });
 
-  return {
-    userId,
-    email: typeof payload.email === "string" ? payload.email : membership.email ?? undefined,
-    displayName: typeof payload.name === "string" ? payload.name : membership.displayName ?? undefined,
-    sessionId,
-    auth0OrganizationId: orgId ?? defaultOrganization ?? authConnection.auth0OrganizationId,
-    tenantId: authConnection.tenantId,
-    tenantSlug: authConnection.tenant.slug,
-    tenantName: authConnection.tenant.name,
-    roles: mergedRoles,
-    permissions: mergedPermissions,
-    authTime,
-    amr,
-    mfaFreshUntil: authTime + env.AUTH0_MFA_FRESHNESS_SECONDS
-  };
+  const persistedSession = await prisma.operatorSession.findUniqueOrThrow({
+    where: { sessionId },
+    include: {
+      tenant: true,
+      membership: true
+    }
+  });
+
+  return buildAuthenticatedSession({
+    sessionId: persistedSession.sessionId,
+    auth0OrganizationId: persistedSession.auth0OrganizationId,
+    tenantId: persistedSession.tenantId,
+    tenantSlug: persistedSession.tenant.slug,
+    tenantName: persistedSession.tenant.name,
+    authTime: persistedSession.authTime,
+    amr: persistedSession.amr,
+    userId: user.auth0UserId,
+    email: persistedSession.email,
+    displayName: persistedSession.displayName,
+    membershipRole: persistedSession.membership.role,
+    membershipPermissions: persistedSession.membership.permissions
+  });
+}
+
+export async function authenticateOperatorSession(sessionId: string): Promise<AuthenticatedSession> {
+  const session = await prisma.operatorSession.findUnique({
+    where: { sessionId },
+    include: {
+      tenant: true,
+      membership: {
+        include: {
+          user: true
+        }
+      }
+    }
+  });
+
+  if (!session || session.revokedAt) {
+    throw new Error("Session has been revoked");
+  }
+
+  if (!session.membership.active) {
+    throw new Error("Authenticated user is not a member of the tenant");
+  }
+
+  if (!session.membership.user.active) {
+    throw new Error("Authenticated user is inactive");
+  }
+
+  await prisma.operatorSession.update({
+    where: { sessionId },
+    data: { lastSeenAt: new Date() }
+  });
+
+  return buildAuthenticatedSession({
+    sessionId: session.sessionId,
+    auth0OrganizationId: session.auth0OrganizationId,
+    tenantId: session.tenantId,
+    tenantSlug: session.tenant.slug,
+    tenantName: session.tenant.name,
+    authTime: session.authTime,
+    amr: session.amr,
+    userId: session.membership.user.auth0UserId,
+    email: session.email ?? session.membership.email,
+    displayName: session.displayName ?? session.membership.displayName,
+    membershipRole: session.membership.role,
+    membershipPermissions: session.membership.permissions
+  });
 }
 
 export async function authenticateServiceToken(token: string): Promise<ServicePrincipalContext> {
-  const payload = await validateTokenSignature(token);
+  const payload = await validateJwtToken(token, env.AUTH0_AUDIENCE);
   const clientId = typeof payload.azp === "string" ? payload.azp : typeof payload.sub === "string" ? payload.sub : undefined;
   const tenantId = typeof payload[env.AUTH0_TENANT_CLAIM] === "string" ? (payload[env.AUTH0_TENANT_CLAIM] as string) : undefined;
   const permissions = coercePermissions(payload[env.AUTH0_PERMISSIONS_CLAIM]);
@@ -475,8 +537,7 @@ export function buildAuthorizeUrl(input: { state: string; nonce: string; codeCha
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", env.AUTH0_CLIENT_ID);
   url.searchParams.set("redirect_uri", env.AUTH0_CALLBACK_URL);
-  url.searchParams.set("scope", "openid profile email offline_access");
-  url.searchParams.set("audience", env.AUTH0_AUDIENCE);
+  url.searchParams.set("scope", "openid profile email");
   url.searchParams.set("code_challenge_method", "S256");
   url.searchParams.set("code_challenge", input.codeChallenge);
   url.searchParams.set("state", input.state);
