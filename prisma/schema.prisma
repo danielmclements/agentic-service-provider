@@ -69,12 +69,10 @@ enum ExecutionRunStatus {
   WAITING_APPROVAL
 }
 
-enum OperatorRole {
-  TENANT_VIEWER
-  TENANT_OPERATOR
-  TENANT_APPROVER
+enum TenantRole {
   TENANT_ADMIN
-  PLATFORM_ADMIN
+  TENANT_OPERATOR
+  TENANT_END_USER
 }
 
 enum AuthConnectionStrategy {
@@ -231,7 +229,7 @@ model TenantMembership {
   auth0OrgId    String
   email         String?
   displayName   String?
-  role          OperatorRole
+  role          TenantRole
   permissions   Json
   active        Boolean      @default(true)
   createdAt     DateTime     @default(now())
@@ -267,7 +265,7 @@ model TenantAuthConnection {
 model OperatorSession {
   id                 String           @id @default(cuid())
   tenantId           String
-  membershipId       String
+  membershipId       String?
   userId             String
   auth0OrganizationId String
   sessionId          String           @unique
@@ -282,7 +280,7 @@ model OperatorSession {
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
   tenant             Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  membership         TenantMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  membership         TenantMembership? @relation(fields: [membershipId], references: [id], onDelete: Cascade)
   user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, userId])

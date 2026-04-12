@@ -54,18 +54,26 @@ export const OPERATOR_PERMISSIONS = [
   "approvals:decide",
   "audit:read",
   "connectors:admin",
-  "tenants:admin"
+  "tenants:admin",
+  "memberships:read",
+  "memberships:write"
 ] as const;
 export type OperatorPermission = (typeof OPERATOR_PERMISSIONS)[number];
 
-export const OPERATOR_ROLES = [
-  "tenant_viewer",
-  "tenant_operator",
-  "tenant_approver",
-  "tenant_admin",
-  "platform_admin"
+export const GLOBAL_ROLES = [
+  "superadmin",
+  "internal_operator"
 ] as const;
-export type OperatorRole = (typeof OPERATOR_ROLES)[number];
+export type GlobalRole = (typeof GLOBAL_ROLES)[number];
+
+export const TENANT_ROLES = [
+  "tenant_admin",
+  "tenant_operator",
+  "tenant_end_user"
+] as const;
+export type TenantRole = (typeof TENANT_ROLES)[number];
+
+export type AuthorizationRole = GlobalRole | TenantRole;
 
 export const VERIFICATION_METHODS = ["PUSH", "WEBAUTHN", "SMS", "MANUAL_REVIEW"] as const;
 export type VerificationMethod = (typeof VERIFICATION_METHODS)[number];
@@ -173,8 +181,18 @@ export interface AuthenticatedSession {
   tenantId: string;
   tenantSlug: string;
   tenantName: string;
-  roles: OperatorRole[];
+  globalRoles: GlobalRole[];
+  tenantRole?: TenantRole;
+  roles: AuthorizationRole[];
   permissions: OperatorPermission[];
+  memberships: Array<{
+    membershipId: string;
+    tenantId: string;
+    tenantSlug: string;
+    tenantName: string;
+    tenantRole: TenantRole;
+    permissions: OperatorPermission[];
+  }>;
   authTime: number;
   amr: string[];
   mfaFreshUntil: number;

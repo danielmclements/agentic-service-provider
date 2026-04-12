@@ -18,7 +18,9 @@
     "approvals:decide": "Approval Decide",
     "audit:read": "Audit Read",
     "connectors:admin": "Connector Admin",
-    "tenants:admin": "Tenant Admin"
+    "tenants:admin": "Tenant Admin",
+    "memberships:read": "Membership Read",
+    "memberships:write": "Membership Write"
   };
 
   const els = {
@@ -46,10 +48,14 @@
     lastRefresh: document.getElementById("last-refresh"),
     sessionUser: document.getElementById("session-user"),
     sessionTenant: document.getElementById("session-tenant"),
+    sessionGlobalRoles: document.getElementById("session-global-roles"),
     sessionPermissions: document.getElementById("session-permissions"),
     sessionRoles: document.getElementById("session-roles"),
     sessionMfa: document.getElementById("session-mfa"),
     sessionAssurance: document.getElementById("session-assurance"),
+    tenantSwitcher: document.getElementById("tenant-switcher"),
+    tenantSwitchButton: document.getElementById("tenant-switch-button"),
+    membershipsList: document.getElementById("memberships-list"),
     authBanner: document.getElementById("auth-banner"),
     queueBadge: document.getElementById("queue-badge"),
     tabButtons: Array.from(document.querySelectorAll("[data-tab]")),
@@ -91,6 +97,10 @@
 
   function hasPermission(permission) {
     return Boolean(state.session && Array.isArray(state.session.permissions) && state.session.permissions.includes(permission));
+  }
+
+  function hasGlobalRole(role) {
+    return Boolean(state.session && Array.isArray(state.session.globalRoles) && state.session.globalRoles.includes(role));
   }
 
   function isMfaFresh() {
@@ -135,9 +145,12 @@
     if (!authenticated) {
       els.sessionUser.textContent = "Not signed in";
       els.sessionTenant.textContent = "Sign in required";
+      els.sessionGlobalRoles.innerHTML = chipList([], { emptyLabel: "No global roles" });
       els.sessionRoles.innerHTML = chipList([], { emptyLabel: "No roles" });
       els.sessionPermissions.innerHTML = chipList([], { emptyLabel: "No permissions" });
       els.sessionMfa.textContent = "No session";
+      els.tenantSwitcher.innerHTML = `<option value="">Sign in required</option>`;
+      els.tenantSwitchButton.disabled = true;
       els.sessionAssurance.className = "status-panel status-panel-warning";
       els.sessionAssurance.innerHTML = `
         <p class="status-title">Authentication required</p>
@@ -159,6 +172,7 @@
 
     els.sessionUser.textContent = session.displayName || session.email || session.userId;
     els.sessionTenant.textContent = `${session.tenantName} (${session.tenantSlug})`;
+    els.sessionGlobalRoles.innerHTML = chipList(session.globalRoles, { emptyLabel: "No global roles", className: "badge-warning" });
     els.sessionRoles.innerHTML = chipList(session.roles, { emptyLabel: "No roles", className: "badge-signal" });
     els.sessionPermissions.innerHTML = chipList(session.permissions, {
       emptyLabel: "No permissions",
@@ -180,11 +194,53 @@
 
     const bannerCopy = hasPermission("approvals:decide")
       ? freshMfa
-        ? "This operator can submit tickets, inspect governance data, and decide approvals in the current session."
+          ? "This operator can submit tickets, inspect governance data, and decide approvals in the current session."
         : "This operator can review work now, but approval decisions will require a fresh MFA step-up."
       : "This operator can monitor the queue and governance state, but approval actions are not available in this role.";
 
+    els.tenantSwitcher.innerHTML = (session.memberships || [])
+      .map(
+        (membership) =>
+          `<option value="${membership.tenantId}" ${membership.tenantId === session.tenantId ? "selected" : ""}>${membership.tenantName} (${membership.tenantRole})</option>`
+      )
+      .join("");
+    els.tenantSwitchButton.disabled = !session.memberships || session.memberships.length < 2;
+
     setAuthBanner("success", `Signed in as ${session.displayName || session.email || session.userId}`, bannerCopy, authChips);
+  }
+
+  function renderMemberships(memberships) {
+    if (!memberships || !memberships.length) {
+      els.membershipsList.innerHTML = `<div class="empty-state">No memberships are visible for this tenant.</div>`;
+      return;
+    }
+
+    els.membershipsList.innerHTML = memberships
+      .map(
+        (membership) => `
+          <article class="ticket-card">
+            <div class="ticket-meta">
+              ${badge(membership.tenantRole)}
+              ${membership.active ? badge("ACTIVE") : badge("INACTIVE")}
+            </div>
+            <h3 class="card-title">${membership.displayName || membership.email || membership.userId}</h3>
+            <p class="approval-comment">${membership.tenantName} • ${membership.userId}</p>
+            <div class="chip-row">${chipList(membership.globalRoles || [], { emptyLabel: "No global roles", className: "badge-warning" })}</div>
+            <div class="chip-row">${chipList(membership.permissions || [], { emptyLabel: "No permissions", className: "badge-neutral", mapValue: formatPermission })}</div>
+          </article>
+        `
+      )
+      .join("");
+  }
+
+  async function loadMemberships() {
+    if (!state.session || (!hasPermission("memberships:read") && !hasGlobalRole("superadmin"))) {
+      els.membershipsList.innerHTML = `<div class="empty-state">Membership visibility is not available in this session.</div>`;
+      return;
+    }
+
+    const data = await apiFetch(`/api/memberships?tenantId=${encodeURIComponent(state.session.tenantId)}`);
+    renderMemberships(data.memberships);
   }
 
   function updateActionAvailability() {
@@ -261,6 +317,32 @@
     updateActionAvailability();
 
     return data.session;
+  }
+
+  async function switchTenant() {
+    if (!state.session) {
+      return;
+    }
+
+    const tenantId = els.tenantSwitcher.value;
+    if (!tenantId || tenantId === state.session.tenantId) {
+      return;
+    }
+
+    try {
+      await apiFetch("/api/session/switch-tenant", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ tenantId })
+      });
+
+      await loadDashboard();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      window.alert(`Tenant switch failed:\n${message}`);
+    }
   }
 
   function renderMetrics(metrics) {
@@ -636,6 +718,7 @@
       els.demoStory.innerHTML = "";
       els.approvalsList.innerHTML = `<div class="empty-state">No approval data is available until an authenticated tenant session is loaded.</div>`;
       els.ticketsList.innerHTML = `<div class="empty-state">No ticket data is available until you sign in.</div>`;
+      els.membershipsList.innerHTML = `<div class="empty-state">Sign in to inspect tenant memberships.</div>`;
       renderAudit([], null);
       els.detailList.innerHTML = `<div class="empty-state">Sign in to inspect ticket decision paths.</div>`;
       return;
@@ -651,6 +734,7 @@
       renderMetrics(metrics);
       renderApprovals(summary.pendingApprovals);
       renderTickets(summary.recentTickets);
+      await loadMemberships();
       els.lastRefresh.textContent = `Last refreshed ${new Date().toLocaleTimeString()}`;
 
       if (state.selectedTicketId) {
@@ -803,6 +887,7 @@
     els.ticketForm.addEventListener("submit", submitTicket);
     els.refreshButton.addEventListener("click", loadDashboard);
     els.logoutButton.addEventListener("click", logout);
+    els.tenantSwitchButton.addEventListener("click", switchTenant);
     document.addEventListener("click", handleTicketScenarios);
     els.approvalsList.addEventListener("click", handleListActions);
     els.ticketsList.addEventListener("click", handleListActions);

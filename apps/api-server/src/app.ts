@@ -1,7 +1,8 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
 import path from "node:path";
-import { authenticateOperatorSession, authenticateServiceToken, buildAuthorizeUrl, createOperatorSession, createPkcePair, extractBearerToken, hasFreshMfa, hasPermission, parseCookieHeader, serializeCookie, validateIdToken } from "@asp/auth";
+import { TenantRole as PrismaTenantRole } from "@prisma/client";
+import { authenticateOperatorSession, authenticateServiceToken, buildAuthorizeUrl, createOperatorSession, createPkcePair, extractBearerToken, hasFreshMfa, hasGlobalRole, hasPermission, parseCookieHeader, serializeCookie, switchOperatorTenant, validateIdToken } from "@asp/auth";
 import { prisma, env } from "@asp/config";
 import { AuditLogService } from "@asp/audit-log";
 import { ApprovalService } from "@asp/approval-service";
@@ -11,7 +12,7 @@ import { signalApprovalDecision, signalVerificationDecision, startTicketWorkflow
 import { TenantContextService } from "@asp/tenant-context";
 import { TicketIntakeService } from "@asp/ticket-intake";
 import { approvalDecisionSchema, ticketIntakeSchema, verificationDecisionSchema } from "@asp/validation";
-import { AuthenticatedSession, OperatorPermission, ServicePrincipalContext } from "@asp/types";
+import { AuthenticatedSession, GlobalRole, OperatorPermission, ServicePrincipalContext, TENANT_ROLES, TenantRole } from "@asp/types";
 
 const ticketIntakeService = new TicketIntakeService();
 const tenantContextService = new TenantContextService();
@@ -44,6 +45,10 @@ function getCookies(req: express.Request) {
 
 function getSessionId(req: express.Request) {
   return getCookies(req)[env.SESSION_COOKIE_NAME];
+}
+
+function sessionHasGlobalRole(session: AuthenticatedSession | undefined, role: GlobalRole) {
+  return Boolean(session && hasGlobalRole(session, role));
 }
 
 async function authenticateOperator(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -104,6 +109,22 @@ function requireOperatorPermission(permission: OperatorPermission, options?: { r
 
     next();
   };
+}
+
+function requireMembershipAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const session = req.operatorSession;
+
+  if (!session) {
+    unauthorized(res, "Operator session required", { loginUrl: "/auth/login" });
+    return;
+  }
+
+  if (!sessionHasGlobalRole(session, "superadmin") && !hasPermission(session, "memberships:write")) {
+    forbidden(res, "Membership administration is not available in this session");
+    return;
+  }
+
+  next();
 }
 
 async function authenticateApiCaller(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -173,6 +194,78 @@ function createOrganizationCookie(value: string) {
 
 function clearCookie(name: string) {
   return serializeCookie(name, "", { maxAge: 0 });
+}
+
+function toPrismaTenantRole(role: TenantRole): PrismaTenantRole {
+  if (!(TENANT_ROLES as readonly string[]).includes(role)) {
+    throw new Error("tenantRole is invalid");
+  }
+
+  return role.toUpperCase() as PrismaTenantRole;
+}
+
+function readTenantSwitchInput(body: unknown) {
+  if (!body || typeof body !== "object" || typeof (body as { tenantId?: unknown }).tenantId !== "string") {
+    throw new Error("tenantId is required");
+  }
+
+  return {
+    tenantId: (body as { tenantId: string }).tenantId
+  };
+}
+
+function readMembershipUpsertInput(body: unknown) {
+  if (!body || typeof body !== "object") {
+    throw new Error("Membership payload is required");
+  }
+
+  const candidate = body as {
+    tenantId?: unknown;
+    auth0UserId?: unknown;
+    email?: unknown;
+    displayName?: unknown;
+    tenantRole?: unknown;
+    permissions?: unknown;
+    globalRoles?: unknown;
+  };
+
+  if (typeof candidate.tenantRole !== "string") {
+    throw new Error("tenantRole is required");
+  }
+
+  if (typeof candidate.auth0UserId !== "string" && typeof candidate.email !== "string") {
+    throw new Error("auth0UserId or email is required");
+  }
+
+  return {
+    tenantId: typeof candidate.tenantId === "string" ? candidate.tenantId : undefined,
+    auth0UserId: typeof candidate.auth0UserId === "string" ? candidate.auth0UserId : undefined,
+    email: typeof candidate.email === "string" ? candidate.email : undefined,
+    displayName: typeof candidate.displayName === "string" ? candidate.displayName : undefined,
+    tenantRole: candidate.tenantRole as TenantRole,
+    permissions: Array.isArray(candidate.permissions) ? candidate.permissions.filter((value): value is string => typeof value === "string") : undefined,
+    globalRoles: Array.isArray(candidate.globalRoles) ? candidate.globalRoles.filter((value): value is string => typeof value === "string") : undefined
+  };
+}
+
+function readMembershipPatchInput(body: unknown) {
+  if (!body || typeof body !== "object") {
+    throw new Error("Membership payload is required");
+  }
+
+  const candidate = body as {
+    tenantRole?: unknown;
+    permissions?: unknown;
+    active?: unknown;
+    globalRoles?: unknown;
+  };
+
+  return {
+    tenantRole: typeof candidate.tenantRole === "string" ? (candidate.tenantRole as TenantRole) : undefined,
+    permissions: Array.isArray(candidate.permissions) ? candidate.permissions.filter((value): value is string => typeof value === "string") : undefined,
+    active: typeof candidate.active === "boolean" ? candidate.active : undefined,
+    globalRoles: Array.isArray(candidate.globalRoles) ? candidate.globalRoles.filter((value): value is string => typeof value === "string") : undefined
+  };
 }
 
 async function exchangeAuthorizationCode(code: string, codeVerifier: string) {
@@ -322,6 +415,213 @@ export function createApp(): express.Express {
       });
     } catch (_error) {
       res.json({ authenticated: false, loginUrl: "/auth/login" });
+    }
+  });
+
+  app.post("/api/session/switch-tenant", authenticateOperator, async (req, res) => {
+    try {
+      const { tenantId } = readTenantSwitchInput(req.body);
+      const session = await switchOperatorTenant(req.operatorSession!.sessionId, tenantId);
+      req.operatorSession = session;
+      req.tenantId = session.tenantId;
+      res.json({ ok: true, session });
+    } catch (error) {
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Unable to switch tenant"
+      });
+    }
+  });
+
+  app.get("/api/memberships", authenticateOperator, async (req, res) => {
+    try {
+      const session = req.operatorSession!;
+      if (!sessionHasGlobalRole(session, "superadmin") && !hasPermission(session, "memberships:read")) {
+        forbidden(res, "Membership visibility is not available in this session");
+        return;
+      }
+
+      const tenantId = typeof req.query.tenantId === "string" ? req.query.tenantId : session.tenantId;
+      const memberships = await prisma.tenantMembership.findMany({
+        where: {
+          tenant: {
+            OR: [{ id: tenantId }, { slug: tenantId }]
+          }
+        },
+        include: {
+          tenant: true,
+          user: true
+        },
+        orderBy: [{ active: "desc" }, { createdAt: "asc" }]
+      });
+
+      res.json({
+        memberships: memberships.map((membership) => ({
+          id: membership.id,
+          tenantId: membership.tenantId,
+          tenantSlug: membership.tenant.slug,
+          tenantName: membership.tenant.name,
+          userId: membership.user.auth0UserId,
+          email: membership.email ?? membership.user.email,
+          displayName: membership.displayName ?? membership.user.displayName,
+          tenantRole: membership.role.toLowerCase(),
+          permissions: membership.permissions,
+          active: membership.active,
+          globalRoles: membership.user.globalRoles
+        }))
+      });
+    } catch (error) {
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Unable to load memberships"
+      });
+    }
+  });
+
+  app.post("/api/memberships", authenticateOperator, requireMembershipAdmin, async (req, res) => {
+    try {
+      const session = req.operatorSession!;
+      const input = readMembershipUpsertInput(req.body);
+      const targetTenantId = input.tenantId ?? session.tenantId;
+      const tenant = await prisma.tenant.findFirst({
+        where: {
+          OR: [{ id: targetTenantId }, { slug: targetTenantId }]
+        }
+      });
+
+      if (!tenant) {
+        res.status(404).json({ error: "Tenant not found" });
+        return;
+      }
+
+      if (!sessionHasGlobalRole(session, "superadmin") && tenant.id !== session.tenantId) {
+        forbidden(res, "This session cannot manage memberships for another tenant");
+        return;
+      }
+
+      const user = await prisma.user.findFirst({
+        where: input.auth0UserId
+          ? { auth0UserId: input.auth0UserId }
+          : {
+              email: {
+                equals: input.email,
+                mode: "insensitive"
+              }
+            }
+      });
+
+      if (!user) {
+        res.status(404).json({
+          error: "User not found. The user must sign in once or be provisioned before a membership can be assigned."
+        });
+        return;
+      }
+
+      const authConnection = await prisma.tenantAuthConnection.findFirst({
+        where: { tenantId: tenant.id },
+        orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }]
+      });
+
+      if (!authConnection) {
+        res.status(400).json({ error: "Tenant is missing an Auth0 organization mapping" });
+        return;
+      }
+
+      const membership = await prisma.tenantMembership.upsert({
+        where: {
+          tenantId_userId: {
+            tenantId: tenant.id,
+            userId: user.id
+          }
+        },
+        update: {
+          email: input.email ?? user.email,
+          displayName: input.displayName ?? user.displayName,
+          auth0OrgId: authConnection.auth0OrganizationId,
+          role: toPrismaTenantRole(input.tenantRole),
+          permissions: input.permissions ?? undefined,
+          active: true
+        },
+        create: {
+          tenantId: tenant.id,
+          userId: user.id,
+          auth0OrgId: authConnection.auth0OrganizationId,
+          email: input.email ?? user.email,
+          displayName: input.displayName ?? user.displayName,
+          role: toPrismaTenantRole(input.tenantRole),
+          permissions: input.permissions ?? [],
+          active: true
+        }
+      });
+
+      if (input.globalRoles && sessionHasGlobalRole(session, "superadmin")) {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            globalRoles: input.globalRoles
+          }
+        });
+      }
+
+      res.status(201).json({
+        membershipId: membership.id,
+        tenantId: membership.tenantId,
+        userId: user.auth0UserId
+      });
+    } catch (error) {
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Unable to save membership"
+      });
+    }
+  });
+
+  app.patch("/api/memberships/:id", authenticateOperator, requireMembershipAdmin, async (req, res) => {
+    try {
+      const session = req.operatorSession!;
+      const membershipId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const existingMembership = await prisma.tenantMembership.findUnique({
+        where: { id: membershipId },
+        include: {
+          tenant: true,
+          user: true
+        }
+      });
+
+      if (!existingMembership) {
+        res.status(404).json({ error: "Membership not found" });
+        return;
+      }
+
+      if (!sessionHasGlobalRole(session, "superadmin") && existingMembership.tenantId !== session.tenantId) {
+        forbidden(res, "This session cannot update memberships for another tenant");
+        return;
+      }
+
+      const patch = readMembershipPatchInput(req.body);
+      const updatedMembership = await prisma.tenantMembership.update({
+        where: { id: existingMembership.id },
+        data: {
+          role: patch.tenantRole ? toPrismaTenantRole(patch.tenantRole) : undefined,
+          permissions: patch.permissions ?? undefined,
+          active: patch.active
+        }
+      });
+
+      if (patch.globalRoles && sessionHasGlobalRole(session, "superadmin")) {
+        await prisma.user.update({
+          where: { id: existingMembership.userId },
+          data: {
+            globalRoles: patch.globalRoles
+          }
+        });
+      }
+
+      res.json({
+        membershipId: updatedMembership.id,
+        active: updatedMembership.active
+      });
+    } catch (error) {
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Unable to update membership"
+      });
     }
   });
 

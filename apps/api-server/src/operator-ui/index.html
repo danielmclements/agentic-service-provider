@@ -36,6 +36,12 @@
               <p id="session-tenant" class="detail-value">Not loaded</p>
             </div>
             <div>
+              <p class="detail-label">Global Roles</p>
+              <div id="session-global-roles" class="chip-row">
+                <span class="badge badge-neutral">Not loaded</span>
+              </div>
+            </div>
+            <div>
               <p class="detail-label">Roles</p>
               <div id="session-roles" class="chip-row">
                 <span class="badge badge-neutral">Not loaded</span>
@@ -55,6 +61,13 @@
               <p class="status-title">Session assurance is loading.</p>
               <p class="status-copy">The console will adapt once the authenticated session is available.</p>
             </div>
+            <label>
+              Active Tenant
+              <select id="tenant-switcher">
+                <option value="">Loading tenants...</option>
+              </select>
+            </label>
+            <button id="tenant-switch-button" class="button button-secondary" type="button">Switch Tenant</button>
             <div class="scenario-row">
               <a id="login-link" class="button button-secondary" href="/auth/login">Sign In</a>
               <button id="logout-button" class="button button-secondary" type="button">Sign Out</button>
@@ -222,6 +235,16 @@
                   <p id="audit-heading" class="meta-text">Choose a ticket to load events.</p>
                 </div>
                 <div id="audit-list" class="timeline"></div>
+              </section>
+
+              <section class="surface surface-wide">
+                <div class="section-header">
+                  <div>
+                    <p class="section-kicker">Access</p>
+                    <h3>Tenant Memberships</h3>
+                  </div>
+                </div>
+                <div id="memberships-list" class="stack-list"></div>
               </section>
             </div>
           </section>

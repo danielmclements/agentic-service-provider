@@ -40,13 +40,14 @@ async function seed() {
     update: {
       email: "operator@acme.com",
       displayName: "Acme Operator",
+      globalRoles: ["internal_operator"],
       active: true
     },
     create: {
       auth0UserId: "auth0|operator-admin",
       email: "operator@acme.com",
       displayName: "Acme Operator",
-      globalRoles: []
+      globalRoles: ["internal_operator"]
     }
   });
 
@@ -55,13 +56,14 @@ async function seed() {
     update: {
       email: "daniel.clements@acme.com",
       displayName: "Daniel Clements",
+      globalRoles: ["superadmin", "internal_operator"],
       active: true
     },
     create: {
       auth0UserId: "auth0|daniel.clements",
       email: "daniel.clements@acme.com",
       displayName: "Daniel Clements",
-      globalRoles: []
+      globalRoles: ["superadmin", "internal_operator"]
     }
   });
 
@@ -95,15 +97,13 @@ async function seed() {
       auth0OrgId: auth0OrganizationId,
       email: "operator@acme.com",
       displayName: "Acme Operator",
-      role: "TENANT_ADMIN",
+      role: "TENANT_OPERATOR",
       permissions: [
         "tickets:read",
         "tickets:submit",
         "approvals:read",
         "approvals:decide",
-        "audit:read",
-        "connectors:admin",
-        "tenants:admin"
+        "audit:read"
       ]
     }
   });
@@ -127,7 +127,9 @@ async function seed() {
         "approvals:decide",
         "audit:read",
         "connectors:admin",
-        "tenants:admin"
+        "tenants:admin",
+        "memberships:read",
+        "memberships:write"
       ],
       active: true
     },
@@ -145,7 +147,9 @@ async function seed() {
         "approvals:decide",
         "audit:read",
         "connectors:admin",
-        "tenants:admin"
+        "tenants:admin",
+        "memberships:read",
+        "memberships:write"
       ]
     }
   });

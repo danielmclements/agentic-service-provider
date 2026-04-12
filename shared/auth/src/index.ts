@@ -1,7 +1,17 @@
 import crypto from "node:crypto";
-import { Prisma } from "@prisma/client";
+import { Prisma, TenantRole as PrismaTenantRole } from "@prisma/client";
 import { env, prisma } from "@asp/config";
-import { AuthenticatedSession, OPERATOR_PERMISSIONS, OPERATOR_ROLES, OperatorPermission, OperatorRole, ServicePrincipalContext } from "@asp/types";
+import {
+  AuthenticatedSession,
+  AuthorizationRole,
+  GLOBAL_ROLES,
+  GlobalRole,
+  OPERATOR_PERMISSIONS,
+  OperatorPermission,
+  ServicePrincipalContext,
+  TENANT_ROLES,
+  TenantRole
+} from "@asp/types";
 
 type JwtPayload = Record<string, unknown> & {
   sub?: string;
@@ -33,15 +43,39 @@ type Jwk = {
   x5c?: string[];
 };
 
+type SessionMembershipSummary = AuthenticatedSession["memberships"][number];
+
 const JWKS_CACHE_TTL_MS = 5 * 60 * 1000;
 const jwksCache = new Map<string, { publicKey: string; expiresAt: number }>();
 
-const rolePermissions: Record<OperatorRole, OperatorPermission[]> = {
-  tenant_viewer: ["tickets:read", "approvals:read", "audit:read"],
-  tenant_operator: ["tickets:read", "tickets:submit", "approvals:read", "audit:read"],
-  tenant_approver: ["tickets:read", "approvals:read", "approvals:decide", "audit:read"],
-  tenant_admin: ["tickets:read", "tickets:submit", "approvals:read", "approvals:decide", "audit:read", "connectors:admin", "tenants:admin"],
-  platform_admin: ["tickets:read", "tickets:submit", "approvals:read", "approvals:decide", "audit:read", "connectors:admin", "tenants:admin"]
+const tenantRolePermissions: Record<TenantRole, OperatorPermission[]> = {
+  tenant_admin: [
+    "tickets:read",
+    "tickets:submit",
+    "approvals:read",
+    "approvals:decide",
+    "audit:read",
+    "connectors:admin",
+    "tenants:admin",
+    "memberships:read",
+    "memberships:write"
+  ],
+  tenant_operator: [
+    "tickets:read",
+    "tickets:submit",
+    "approvals:read",
+    "approvals:decide",
+    "audit:read"
+  ],
+  tenant_end_user: [
+    "tickets:read",
+    "tickets:submit"
+  ]
+};
+
+const globalRolePermissions: Record<GlobalRole, OperatorPermission[]> = {
+  superadmin: [...OPERATOR_PERMISSIONS],
+  internal_operator: []
 };
 
 function toBase64Url(input: Buffer | string) {
@@ -193,14 +227,6 @@ async function validateJwtToken(token: string, expectedAudience: string, options
   return payload;
 }
 
-function coerceRoles(input: unknown): OperatorRole[] {
-  if (!Array.isArray(input)) {
-    return [];
-  }
-
-  return input.filter((role): role is OperatorRole => typeof role === "string" && (OPERATOR_ROLES as readonly string[]).includes(role));
-}
-
 function coercePermissions(input: unknown): OperatorPermission[] {
   if (!Array.isArray(input)) {
     return [];
@@ -212,15 +238,38 @@ function coercePermissions(input: unknown): OperatorPermission[] {
   );
 }
 
-function unionPermissions(roles: OperatorRole[], permissions: OperatorPermission[]) {
-  const combined = new Set<OperatorPermission>(permissions);
-  for (const role of roles) {
-    for (const permission of rolePermissions[role] ?? []) {
+function coerceGlobalRoles(input: unknown): GlobalRole[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input.filter((role): role is GlobalRole => typeof role === "string" && (GLOBAL_ROLES as readonly string[]).includes(role));
+}
+
+function toTenantRole(role: PrismaTenantRole): TenantRole {
+  return role.toLowerCase() as TenantRole;
+}
+
+function unionPermissions(input: { globalRoles: GlobalRole[]; tenantRole?: TenantRole; permissions?: OperatorPermission[] }) {
+  const combined = new Set<OperatorPermission>(input.permissions ?? []);
+
+  for (const role of input.globalRoles) {
+    for (const permission of globalRolePermissions[role] ?? []) {
+      combined.add(permission);
+    }
+  }
+
+  if (input.tenantRole) {
+    for (const permission of tenantRolePermissions[input.tenantRole] ?? []) {
       combined.add(permission);
     }
   }
 
   return [...combined];
+}
+
+function unionRoles(input: { globalRoles: GlobalRole[]; tenantRole?: TenantRole }): AuthorizationRole[] {
+  return [...input.globalRoles, ...(input.tenantRole ? [input.tenantRole] : [])];
 }
 
 export function extractBearerToken(headers: Record<string, string | string[] | undefined>) {
@@ -284,6 +333,33 @@ async function resolveTenantAuthConnection(organization: string) {
   return authConnection;
 }
 
+async function resolveTenantByIdOrSlug(tenantIdOrSlug: string) {
+  const tenant = await prisma.tenant.findFirst({
+    where: {
+      OR: [{ id: tenantIdOrSlug }, { slug: tenantIdOrSlug }]
+    }
+  });
+
+  if (!tenant) {
+    throw new Error("Tenant could not be found");
+  }
+
+  return tenant;
+}
+
+async function resolveTenantDefaultAuthConnection(tenantId: string) {
+  const authConnection = await prisma.tenantAuthConnection.findFirst({
+    where: { tenantId },
+    orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }]
+  });
+
+  if (!authConnection) {
+    throw new Error("No Auth0 organization is mapped to the selected tenant");
+  }
+
+  return authConnection;
+}
+
 async function upsertUser(identity: OperatorIdentity) {
   const user = await prisma.user.upsert({
     where: { auth0UserId: identity.userId },
@@ -315,7 +391,6 @@ async function resolveMembershipForLogin(userId: string, tenantId: string, email
     }
   });
 
-  // Transitional bootstrap for pre-existing seeded memberships that were created before real Auth0 user IDs were known.
   if (!membership && email) {
     const matchingMemberships = await prisma.tenantMembership.findMany({
       where: {
@@ -341,47 +416,125 @@ async function resolveMembershipForLogin(userId: string, tenantId: string, email
     }
   }
 
-  if (!membership) {
-    throw new Error("Authenticated user is not a member of the tenant");
-  }
-
   return membership;
 }
 
-function buildAuthenticatedSession(input: {
-  sessionId: string;
-  auth0OrganizationId: string;
-  tenantId: string;
-  tenantSlug: string;
-  tenantName: string;
-  authTime: Date;
-  amr: unknown;
-  userId: string;
-  email?: string | null;
-  displayName?: string | null;
-  membershipRole: string;
-  membershipPermissions: unknown;
-}) {
-  const roles = [input.membershipRole.toLowerCase() as OperatorRole];
-  const permissions = unionPermissions(roles, coercePermissions(input.membershipPermissions));
-  const authTime = Math.floor(input.authTime.getTime() / 1000);
-  const amr = Array.isArray(input.amr) ? input.amr.filter((item): item is string => typeof item === "string") : [];
+async function resolveUserMemberships(userId: string): Promise<SessionMembershipSummary[]> {
+  const memberships = await prisma.tenantMembership.findMany({
+    where: {
+      userId,
+      active: true
+    },
+    include: {
+      tenant: true
+    },
+    orderBy: {
+      createdAt: "asc"
+    }
+  });
+
+  return memberships.map((membership) => ({
+    membershipId: membership.id,
+    tenantId: membership.tenantId,
+    tenantSlug: membership.tenant.slug,
+    tenantName: membership.tenant.name,
+    tenantRole: toTenantRole(membership.role),
+    permissions: coercePermissions(membership.permissions)
+  }));
+}
+
+type SessionRecord = Prisma.PromiseReturnType<typeof getSessionRecord>;
+
+async function getSessionRecord(sessionId: string) {
+  return prisma.operatorSession.findUnique({
+    where: { sessionId },
+    include: {
+      tenant: true,
+      membership: true,
+      user: true
+    }
+  });
+}
+
+function buildAuthenticatedSession(input: { session: NonNullable<SessionRecord>; memberships: SessionMembershipSummary[] }): AuthenticatedSession {
+  const { session, memberships } = input;
+  const globalRoles = coerceGlobalRoles(session.user.globalRoles);
+  const currentMembership = session.membershipId
+    ? memberships.find((membership) => membership.membershipId === session.membershipId)
+    : undefined;
+  const tenantRole = currentMembership?.tenantRole;
+  const permissions = unionPermissions({
+    globalRoles,
+    tenantRole,
+    permissions: currentMembership?.permissions ?? []
+  });
+  const authTime = Math.floor(session.authTime.getTime() / 1000);
+  const amr = Array.isArray(session.amr) ? session.amr.filter((item): item is string => typeof item === "string") : [];
 
   return {
-    userId: input.userId,
-    email: input.email ?? undefined,
-    displayName: input.displayName ?? undefined,
-    sessionId: input.sessionId,
-    auth0OrganizationId: input.auth0OrganizationId,
-    tenantId: input.tenantId,
-    tenantSlug: input.tenantSlug,
-    tenantName: input.tenantName,
-    roles,
+    userId: session.user.auth0UserId,
+    email: session.email ?? session.user.email ?? undefined,
+    displayName: session.displayName ?? session.user.displayName ?? undefined,
+    sessionId: session.sessionId,
+    auth0OrganizationId: session.auth0OrganizationId,
+    tenantId: session.tenantId,
+    tenantSlug: session.tenant.slug,
+    tenantName: session.tenant.name,
+    globalRoles,
+    tenantRole,
+    roles: unionRoles({ globalRoles, tenantRole }),
     permissions,
+    memberships,
     authTime,
     amr,
     mfaFreshUntil: authTime + env.AUTH0_MFA_FRESHNESS_SECONDS
-  } satisfies AuthenticatedSession;
+  };
+}
+
+async function persistOperatorSessionSelection(input: {
+  sessionId: string;
+  userId: string;
+  tenantId: string;
+  auth0OrganizationId: string;
+  membershipId?: string | null;
+  email?: string | null;
+  displayName?: string | null;
+  roles: AuthorizationRole[];
+  permissions: OperatorPermission[];
+  authTime: Date;
+  amr: string[];
+}) {
+  await prisma.operatorSession.upsert({
+    where: { sessionId: input.sessionId },
+    create: {
+      sessionId: input.sessionId,
+      tenantId: input.tenantId,
+      membershipId: input.membershipId ?? null,
+      userId: input.userId,
+      auth0OrganizationId: input.auth0OrganizationId,
+      email: input.email ?? null,
+      displayName: input.displayName ?? null,
+      roles: input.roles as unknown as Prisma.InputJsonValue,
+      permissions: input.permissions as unknown as Prisma.InputJsonValue,
+      authTime: input.authTime,
+      amr: input.amr,
+      lastSeenAt: new Date()
+    },
+    update: {
+      tenantId: input.tenantId,
+      membershipId: input.membershipId ?? null,
+      userId: input.userId,
+      auth0OrganizationId: input.auth0OrganizationId,
+      email: input.email ?? null,
+      displayName: input.displayName ?? null,
+      roles: input.roles as unknown as Prisma.InputJsonValue,
+      permissions: input.permissions as unknown as Prisma.InputJsonValue,
+      authTime: input.authTime,
+      amr: input.amr,
+      lastSeenAt: new Date(),
+      revokedAt: null
+    }
+  });
 }
 
 export async function validateIdToken(idToken: string, nonce?: string): Promise<OperatorIdentity> {
@@ -409,6 +562,7 @@ export async function createOperatorSession(identity: OperatorIdentity, organiza
 
   const authConnection = await resolveTenantAuthConnection(selectedOrganization);
   const user = await upsertUser(identity);
+  const globalRoles = coerceGlobalRoles(user.globalRoles);
   const membership = await resolveMembershipForLogin(
     user.id,
     authConnection.tenantId,
@@ -417,71 +571,102 @@ export async function createOperatorSession(identity: OperatorIdentity, organiza
     authConnection.auth0OrganizationId
   );
 
+  if (!membership && !globalRoles.includes("superadmin")) {
+    throw new Error("Authenticated user is not a member of the tenant");
+  }
+
+  const tenantRole = membership ? toTenantRole(membership.role) : undefined;
+  const permissions = unionPermissions({
+    globalRoles,
+    tenantRole,
+    permissions: membership ? coercePermissions(membership.permissions) : []
+  });
   const sessionId = crypto.randomUUID();
-  await prisma.operatorSession.create({
-    data: {
-      tenantId: authConnection.tenantId,
-      membershipId: membership.id,
-      userId: user.id,
-      auth0OrganizationId: authConnection.auth0OrganizationId,
-      sessionId,
-      email: identity.email ?? membership.email,
-      displayName: identity.displayName ?? membership.displayName,
-      roles: [membership.role.toLowerCase()],
-      permissions: membership.permissions as Prisma.InputJsonValue,
-      authTime: new Date(identity.authTime * 1000),
-      amr: identity.amr,
-      lastSeenAt: new Date()
-    }
+
+  await persistOperatorSessionSelection({
+    sessionId,
+    tenantId: authConnection.tenantId,
+    membershipId: membership?.id ?? null,
+    userId: user.id,
+    auth0OrganizationId: authConnection.auth0OrganizationId,
+    email: identity.email ?? membership?.email ?? user.email,
+    displayName: identity.displayName ?? membership?.displayName ?? user.displayName,
+    roles: unionRoles({ globalRoles, tenantRole }),
+    permissions,
+    authTime: new Date(identity.authTime * 1000),
+    amr: identity.amr
   });
 
-  const persistedSession = await prisma.operatorSession.findUniqueOrThrow({
-    where: { sessionId },
-    include: {
-      tenant: true,
-      membership: true
-    }
+  return authenticateOperatorSession(sessionId);
+}
+
+export async function switchOperatorTenant(sessionId: string, tenantIdOrSlug: string): Promise<AuthenticatedSession> {
+  const existingSession = await getSessionRecord(sessionId);
+  if (!existingSession || existingSession.revokedAt) {
+    throw new Error("Session has been revoked");
+  }
+
+  if (!existingSession.user.active) {
+    throw new Error("Authenticated user is inactive");
+  }
+
+  const tenant = await resolveTenantByIdOrSlug(tenantIdOrSlug);
+  const memberships = await resolveUserMemberships(existingSession.userId);
+  const membership = memberships.find((candidate) => candidate.tenantId === tenant.id);
+  const globalRoles = coerceGlobalRoles(existingSession.user.globalRoles);
+
+  if (!membership && !globalRoles.includes("superadmin")) {
+    throw new Error("Authenticated user is not a member of the requested tenant");
+  }
+
+  const authConnection = await resolveTenantDefaultAuthConnection(tenant.id);
+  const tenantRole = membership?.tenantRole;
+  const permissions = unionPermissions({
+    globalRoles,
+    tenantRole,
+    permissions: membership?.permissions ?? []
   });
 
-  return buildAuthenticatedSession({
-    sessionId: persistedSession.sessionId,
-    auth0OrganizationId: persistedSession.auth0OrganizationId,
-    tenantId: persistedSession.tenantId,
-    tenantSlug: persistedSession.tenant.slug,
-    tenantName: persistedSession.tenant.name,
-    authTime: persistedSession.authTime,
-    amr: persistedSession.amr,
-    userId: user.auth0UserId,
-    email: persistedSession.email,
-    displayName: persistedSession.displayName,
-    membershipRole: persistedSession.membership.role,
-    membershipPermissions: persistedSession.membership.permissions
+  await persistOperatorSessionSelection({
+    sessionId,
+    tenantId: tenant.id,
+    membershipId: membership?.membershipId ?? null,
+    userId: existingSession.userId,
+    auth0OrganizationId: authConnection.auth0OrganizationId,
+    email: existingSession.email ?? existingSession.user.email,
+    displayName: existingSession.displayName ?? existingSession.user.displayName,
+    roles: unionRoles({ globalRoles, tenantRole }),
+    permissions,
+    authTime: existingSession.authTime,
+    amr: Array.isArray(existingSession.amr) ? existingSession.amr.filter((item): item is string => typeof item === "string") : []
   });
+
+  return authenticateOperatorSession(sessionId);
 }
 
 export async function authenticateOperatorSession(sessionId: string): Promise<AuthenticatedSession> {
-  const session = await prisma.operatorSession.findUnique({
-    where: { sessionId },
-    include: {
-      tenant: true,
-      membership: {
-        include: {
-          user: true
-        }
-      }
-    }
-  });
+  const session = await getSessionRecord(sessionId);
 
   if (!session || session.revokedAt) {
     throw new Error("Session has been revoked");
   }
 
-  if (!session.membership.active) {
+  if (!session.user.active) {
+    throw new Error("Authenticated user is inactive");
+  }
+
+  const memberships = await resolveUserMemberships(session.userId);
+  const globalRoles = coerceGlobalRoles(session.user.globalRoles);
+  const currentMembership = session.membershipId
+    ? memberships.find((membership) => membership.membershipId === session.membershipId)
+    : undefined;
+
+  if (session.membershipId && !currentMembership) {
     throw new Error("Authenticated user is not a member of the tenant");
   }
 
-  if (!session.membership.user.active) {
-    throw new Error("Authenticated user is inactive");
+  if (!currentMembership && !globalRoles.includes("superadmin")) {
+    throw new Error("Authenticated user is not a member of the tenant");
   }
 
   await prisma.operatorSession.update({
@@ -490,18 +675,8 @@ export async function authenticateOperatorSession(sessionId: string): Promise<Au
   });
 
   return buildAuthenticatedSession({
-    sessionId: session.sessionId,
-    auth0OrganizationId: session.auth0OrganizationId,
-    tenantId: session.tenantId,
-    tenantSlug: session.tenant.slug,
-    tenantName: session.tenant.name,
-    authTime: session.authTime,
-    amr: session.amr,
-    userId: session.membership.user.auth0UserId,
-    email: session.email ?? session.membership.email,
-    displayName: session.displayName ?? session.membership.displayName,
-    membershipRole: session.membership.role,
-    membershipPermissions: session.membership.permissions
+    session,
+    memberships
   });
 }
 
@@ -528,6 +703,10 @@ export function hasPermission(session: AuthenticatedSession, permission: Operato
 
 export function hasFreshMfa(session: AuthenticatedSession) {
   return session.amr.includes("mfa") && session.mfaFreshUntil * 1000 > Date.now();
+}
+
+export function hasGlobalRole(session: AuthenticatedSession, role: GlobalRole) {
+  return session.globalRoles.includes(role);
 }
 
 export function buildAuthorizeUrl(input: { state: string; nonce: string; codeChallenge: string; organization?: string; prompt?: string }) {

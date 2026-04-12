@@ -126,8 +126,20 @@ vi.mock("@asp/auth", () => {
     tenantId: "tenant-1",
     tenantSlug: "acme",
     tenantName: "Acme",
+    globalRoles: [],
+    tenantRole: "tenant_admin",
     roles: ["tenant_admin"],
-    permissions: ["tickets:read", "tickets:submit", "approvals:read", "approvals:decide", "audit:read"],
+    permissions: ["tickets:read", "tickets:submit", "approvals:read", "approvals:decide", "audit:read", "memberships:read", "memberships:write"],
+    memberships: [
+      {
+        membershipId: "membership-1",
+        tenantId: "tenant-1",
+        tenantSlug: "acme",
+        tenantName: "Acme",
+        tenantRole: "tenant_admin",
+        permissions: ["tickets:read", "tickets:submit", "approvals:read", "approvals:decide", "audit:read", "memberships:read", "memberships:write"]
+      }
+    ],
     authTime: 100,
     amr: ["pwd", "mfa"],
     mfaFreshUntil: Math.floor(Date.now() / 1000) + 300
@@ -183,7 +195,9 @@ vi.mock("@asp/auth", () => {
       amr: ["pwd", "mfa"]
     })),
     createOperatorSession: vi.fn(async () => operatorSession),
+    switchOperatorTenant: vi.fn(async () => operatorSession),
     hasPermission: vi.fn((session, permission) => session.permissions.includes(permission)),
+    hasGlobalRole: vi.fn((session, role) => session.globalRoles.includes(role)),
     hasFreshMfa: vi.fn((session) => session.amr.includes("mfa") && session.mfaFreshUntil > Math.floor(Date.now() / 1000)),
     buildAuthorizeUrl: vi.fn(() => "https://example.us.auth0.com/authorize"),
     createPkcePair: vi.fn(() => ({
@@ -407,6 +421,23 @@ describe("API server auth model", () => {
 
     expect(response.statusCode).toBe(200);
     expect(mocks.getOperatorSummary).toHaveBeenCalledWith("tenant-1");
+  });
+
+  it("allows an authenticated operator to switch the active tenant context", async () => {
+    const app = createApp();
+    const response = await invokeRoute(app, "post", "/api/session/switch-tenant", {
+      headers: {
+        cookie: "asp_operator_session=operator-valid"
+      },
+      body: {
+        tenantId: "tenant-2"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true
+    }));
   });
 
   it("rejects requests when the authenticated operator lacks permission", async () => {

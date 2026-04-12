@@ -188,6 +188,8 @@ Required permissions:
 - `audit:read`
 - `connectors:admin`
 - `tenants:admin`
+- `memberships:read`
+- `memberships:write`
 
 This API configuration is required for bearer-token callers of the API. It is not required just to establish the browser session for `/operator`.
 
@@ -195,17 +197,30 @@ If a browser-based workflow later requests `audience=https://agentic-service-pro
 
 ### 4. Roles
 
-Create Auth0 roles that match the app roles:
+The app now uses a split role model:
 
-- `tenant_viewer`
-- `tenant_operator`
-- `tenant_approver`
-- `tenant_admin`
-- `platform_admin`
+- Global roles:
+  - `superadmin`
+  - `internal_operator`
+- Tenant roles:
+  - `tenant_admin`
+  - `tenant_operator`
+  - `tenant_end_user`
 
-At minimum for Daniel:
+Recommended production mapping:
 
-- `tenant_admin`
+- Daniel:
+  - global roles `superadmin`, `internal_operator`
+  - tenant role `tenant_admin` in the initial customer tenant
+- Internal HIL engineers:
+  - global role `internal_operator`
+  - tenant role `tenant_operator` in each assigned tenant
+- Customer admins:
+  - tenant role `tenant_admin`
+- Customer end users:
+  - tenant role `tenant_end_user`
+
+`superadmin` is now an application-level role stored in the platform database rather than a tenant membership role.
 
 ### 5. Post-Login Action
 
