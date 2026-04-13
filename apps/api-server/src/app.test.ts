@@ -82,6 +82,110 @@ const mocks = vi.hoisted(() => ({
     ticketId: "ticket-1",
     actionRequestId: "action-request-1"
   })),
+  listAdminUsers: vi.fn<(...args: unknown[]) => Promise<Array<Record<string, unknown>>>>(async () => []),
+  getAdminUser: vi.fn(async (userId: string) => ({
+    id: userId,
+    auth0UserId: "auth0|managed-user",
+    email: "managed@example.com",
+    displayName: "Managed User",
+    active: true,
+    globalRoles: [],
+    provisioningStatus: "provisioned",
+    memberships: []
+  })),
+  createAdminUser: vi.fn(async () => ({
+    user: {
+      id: "user-1",
+      auth0UserId: "auth0|user-1",
+      email: "new@example.com",
+      displayName: "New User",
+      active: true,
+      globalRoles: [],
+      provisioningStatus: "invited",
+      memberships: []
+    },
+    sync: {
+      status: "ok",
+      inviteUrl: "https://example.us.auth0.com/invite"
+    }
+  })),
+  updateAdminUser: vi.fn(async () => ({
+    user: {
+      id: "user-1",
+      auth0UserId: "auth0|user-1",
+      email: "updated@example.com",
+      displayName: "Updated User",
+      active: true,
+      globalRoles: [],
+      provisioningStatus: "provisioned",
+      memberships: []
+    },
+    sync: {
+      status: "ok"
+    }
+  })),
+  deactivateAdminUser: vi.fn(async () => ({
+    user: {
+      id: "user-1",
+      auth0UserId: "auth0|user-1",
+      email: "updated@example.com",
+      displayName: "Updated User",
+      active: false,
+      globalRoles: [],
+      provisioningStatus: "provisioned",
+      memberships: []
+    },
+    sync: {
+      status: "ok"
+    }
+  })),
+  inviteAdminUser: vi.fn(async () => ({
+    user: {
+      id: "user-1",
+      auth0UserId: "auth0|user-1",
+      email: "updated@example.com",
+      displayName: "Updated User",
+      active: true,
+      globalRoles: [],
+      provisioningStatus: "invited",
+      memberships: []
+    },
+    sync: {
+      status: "ok",
+      inviteUrl: "https://example.us.auth0.com/invite"
+    }
+  })),
+  listUserMemberships: vi.fn(async () => []),
+  addUserMembership: vi.fn(async () => ({
+    user: {
+      id: "user-1",
+      auth0UserId: "auth0|user-1",
+      email: "updated@example.com",
+      displayName: "Updated User",
+      active: true,
+      globalRoles: [],
+      provisioningStatus: "provisioned",
+      memberships: []
+    },
+    sync: {
+      status: "ok"
+    }
+  })),
+  updateUserMembership: vi.fn(async () => ({
+    user: {
+      id: "user-1",
+      auth0UserId: "auth0|user-1",
+      email: "updated@example.com",
+      displayName: "Updated User",
+      active: true,
+      globalRoles: [],
+      provisioningStatus: "provisioned",
+      memberships: []
+    },
+    sync: {
+      status: "ok"
+    }
+  })),
   signalApprovalDecision: vi.fn(async () => undefined),
   signalVerificationDecision: vi.fn(async () => undefined),
   startTicketWorkflow: vi.fn(async () => ({
@@ -290,9 +394,23 @@ vi.mock("@asp/approval-service", () => ({
   }
 }));
 
+vi.mock("@asp/user-admin", () => ({
+  UserAdminService: class {
+    listUsers = mocks.listAdminUsers;
+    getUser = mocks.getAdminUser;
+    createUser = mocks.createAdminUser;
+    updateUser = mocks.updateAdminUser;
+    deactivateUser = mocks.deactivateAdminUser;
+    inviteUser = mocks.inviteAdminUser;
+    listMemberships = mocks.listUserMemberships;
+    addMembership = mocks.addUserMembership;
+    updateMembership = mocks.updateUserMembership;
+  }
+}));
+
 import { createApp } from "./app";
 
-function findRouteHandlers(app: ReturnType<typeof createApp>, path: string, method: "get" | "post") {
+function findRouteHandlers(app: ReturnType<typeof createApp>, path: string, method: "get" | "post" | "patch" | "delete") {
   const router = (app as unknown as { router?: { stack?: Array<{ route?: { path?: string; methods?: Record<string, boolean>; stack?: Array<{ handle: Function }> } }> } }).router;
   const layer = router?.stack?.find((entry) => entry.route?.path === path && entry.route?.methods?.[method]);
 
@@ -305,7 +423,7 @@ function findRouteHandlers(app: ReturnType<typeof createApp>, path: string, meth
 
 async function invokeRoute(
   app: ReturnType<typeof createApp>,
-  method: "get" | "post",
+  method: "get" | "post" | "patch" | "delete",
   path: string,
   input: {
     headers?: Record<string, string>;
@@ -450,6 +568,108 @@ describe("API server auth model", () => {
 
     expect(response.statusCode).toBe(403);
     expect((response.body as { error: string }).error).toContain("tickets:read");
+  });
+
+  it("lists admin users for an authorized operator session", async () => {
+    mocks.listAdminUsers.mockResolvedValueOnce([
+      {
+        id: "user-1",
+        auth0UserId: "auth0|managed-user",
+        email: "managed@example.com",
+        displayName: "Managed User",
+        active: true,
+        globalRoles: [],
+        provisioningStatus: "provisioned",
+        memberships: []
+      }
+    ] as Array<Record<string, unknown>>);
+
+    const app = createApp();
+    const response = await invokeRoute(app, "get", "/api/admin/users", {
+      headers: {
+        cookie: "asp_operator_session=operator-valid"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(mocks.listAdminUsers).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "auth0|alice"
+    }), { tenantId: undefined });
+    expect(response.body).toEqual({
+      users: [
+        expect.objectContaining({
+          id: "user-1",
+          email: "managed@example.com"
+        })
+      ]
+    });
+  });
+
+  it("creates admin users through the user-admin backend", async () => {
+    const app = createApp();
+    const response = await invokeRoute(app, "post", "/api/admin/users", {
+      headers: {
+        cookie: "asp_operator_session=operator-valid"
+      },
+      body: {
+        email: "new@example.com",
+        displayName: "New User",
+        initialMembership: {
+          tenantId: "tenant-1",
+          tenantRole: "tenant_operator",
+          permissionOverrides: ["tickets:read"]
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(mocks.createAdminUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "auth0|alice"
+      }),
+      expect.objectContaining({
+        email: "new@example.com",
+        initialMembership: expect.objectContaining({
+          tenantRole: "tenant_operator"
+        })
+      })
+    );
+    expect(response.body).toEqual(expect.objectContaining({
+      user: expect.objectContaining({
+        email: "new@example.com"
+      }),
+      sync: expect.objectContaining({
+        status: "ok"
+      })
+    }));
+  });
+
+  it("updates memberships through the admin membership endpoint", async () => {
+    const app = createApp();
+    const response = await invokeRoute(app, "patch", "/api/admin/memberships/:id", {
+      headers: {
+        cookie: "asp_operator_session=operator-valid"
+      },
+      params: {
+        id: "membership-1"
+      },
+      body: {
+        tenantRole: "tenant_end_user",
+        active: false
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(mocks.updateUserMembership).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "auth0|alice"
+      }),
+      "membership-1",
+      {
+        tenantRole: "tenant_end_user",
+        active: false
+      }
+    );
   });
 
   it("requires fresh MFA before approving an approval-gated action", async () => {

@@ -96,6 +96,13 @@ enum VerificationStatus {
   BYPASSED
 }
 
+enum UserProvisioningStatus {
+  LOCAL_ONLY
+  PROVISIONED
+  INVITED
+  ERROR
+}
+
 model Tenant {
   id               String           @id @default(cuid())
   slug             String           @unique
@@ -112,16 +119,20 @@ model Tenant {
 }
 
 model User {
-  id          String             @id @default(cuid())
-  auth0UserId String             @unique
-  email       String?
-  displayName String?
-  globalRoles Json
-  active      Boolean            @default(true)
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
-  memberships TenantMembership[]
-  sessions    OperatorSession[]
+  id                String                 @id @default(cuid())
+  auth0UserId       String                 @unique
+  email             String?
+  displayName       String?
+  globalRoles       Json
+  active            Boolean                @default(true)
+  provisioningStatus UserProvisioningStatus @default(LOCAL_ONLY)
+  invitedAt         DateTime?
+  lastAuth0SyncAt   DateTime?
+  lastAuth0SyncError String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  memberships       TenantMembership[]
+  sessions          OperatorSession[]
 }
 
 model TenantPolicy {

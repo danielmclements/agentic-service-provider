@@ -109,6 +109,7 @@ jobs:
           PROD_DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
           PROD_POSTGRES_PASSWORD: ${{ secrets.PROD_POSTGRES_PASSWORD }}
           PROD_AUTH0_CLIENT_SECRET: ${{ secrets.PROD_AUTH0_CLIENT_SECRET }}
+          PROD_AUTH0_MANAGEMENT_CLIENT_SECRET: ${{ secrets.PROD_AUTH0_MANAGEMENT_CLIENT_SECRET }}
           PROD_OPENAI_API_KEY: ${{ secrets.PROD_OPENAI_API_KEY }}
           PROD_TEMPORAL_BASICAUTH_PASSWORD_HASH: ${{ secrets.PROD_TEMPORAL_BASICAUTH_PASSWORD_HASH }}
         run: |
@@ -120,6 +121,7 @@ jobs:
           printf '%s' "$PROD_DATABASE_URL" > .deploy-secrets/infra/docker/secrets/database_url.txt
           printf '%s' "$PROD_POSTGRES_PASSWORD" > .deploy-secrets/infra/docker/secrets/postgres_password.txt
           printf '%s' "$PROD_AUTH0_CLIENT_SECRET" > .deploy-secrets/infra/docker/secrets/auth0_client_secret.txt
+          printf '%s' "$PROD_AUTH0_MANAGEMENT_CLIENT_SECRET" > .deploy-secrets/infra/docker/secrets/auth0_management_client_secret.txt
           printf '%s' "$PROD_OPENAI_API_KEY" > .deploy-secrets/infra/docker/secrets/openai_api_key.txt
           chmod 600 .deploy-secrets/.env.production .deploy-secrets/infra/docker/secrets/*.txt
 

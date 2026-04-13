@@ -75,6 +75,66 @@ export type TenantRole = (typeof TENANT_ROLES)[number];
 
 export type AuthorizationRole = GlobalRole | TenantRole;
 
+export const USER_PROVISIONING_STATUSES = [
+  "local_only",
+  "provisioned",
+  "invited",
+  "error"
+] as const;
+export type UserProvisioningStatus = (typeof USER_PROVISIONING_STATUSES)[number];
+
+export const GLOBAL_ROLE_PERMISSIONS: Record<GlobalRole, OperatorPermission[]> = {
+  superadmin: [...OPERATOR_PERMISSIONS],
+  internal_operator: []
+};
+
+export const TENANT_ROLE_PERMISSIONS: Record<TenantRole, OperatorPermission[]> = {
+  tenant_admin: [
+    "tickets:read",
+    "tickets:submit",
+    "approvals:read",
+    "approvals:decide",
+    "audit:read",
+    "connectors:admin",
+    "tenants:admin",
+    "memberships:read",
+    "memberships:write"
+  ],
+  tenant_operator: [
+    "tickets:read",
+    "tickets:submit",
+    "approvals:read",
+    "approvals:decide",
+    "audit:read"
+  ],
+  tenant_end_user: [
+    "tickets:read",
+    "tickets:submit"
+  ]
+};
+
+export function resolveOperatorPermissions(input: {
+  globalRoles?: GlobalRole[];
+  tenantRole?: TenantRole;
+  permissionOverrides?: OperatorPermission[];
+}) {
+  const combined = new Set<OperatorPermission>(input.permissionOverrides ?? []);
+
+  for (const role of input.globalRoles ?? []) {
+    for (const permission of GLOBAL_ROLE_PERMISSIONS[role] ?? []) {
+      combined.add(permission);
+    }
+  }
+
+  if (input.tenantRole) {
+    for (const permission of TENANT_ROLE_PERMISSIONS[input.tenantRole] ?? []) {
+      combined.add(permission);
+    }
+  }
+
+  return [...combined];
+}
+
 export const VERIFICATION_METHODS = ["PUSH", "WEBAUTHN", "SMS", "MANUAL_REVIEW"] as const;
 export type VerificationMethod = (typeof VERIFICATION_METHODS)[number];
 

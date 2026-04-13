@@ -11,7 +11,8 @@ import { OperatorInsightsService } from "@asp/operator-insights";
 import { signalApprovalDecision, signalVerificationDecision, startTicketWorkflow } from "@asp/orchestration";
 import { TenantContextService } from "@asp/tenant-context";
 import { TicketIntakeService } from "@asp/ticket-intake";
-import { approvalDecisionSchema, ticketIntakeSchema, verificationDecisionSchema } from "@asp/validation";
+import { UserAdminService } from "@asp/user-admin";
+import { approvalDecisionSchema, ticketIntakeSchema, userCreateSchema, userMembershipCreateSchema, userMembershipUpdateSchema, userUpdateSchema, verificationDecisionSchema } from "@asp/validation";
 import { AuthenticatedSession, GlobalRole, OperatorPermission, ServicePrincipalContext, TENANT_ROLES, TenantRole } from "@asp/types";
 
 const ticketIntakeService = new TicketIntakeService();
@@ -19,6 +20,7 @@ const tenantContextService = new TenantContextService();
 const approvalService = new ApprovalService();
 const auditLogService = new AuditLogService();
 const operatorInsightsService = new OperatorInsightsService();
+const userAdminService = new UserAdminService();
 
 async function resolveTenantId(tenantIdOrSlug: string) {
   const tenantContext = await tenantContextService.getTenantContext(tenantIdOrSlug);
@@ -121,6 +123,22 @@ function requireMembershipAdmin(req: express.Request, res: express.Response, nex
 
   if (!sessionHasGlobalRole(session, "superadmin") && !hasPermission(session, "memberships:write")) {
     forbidden(res, "Membership administration is not available in this session");
+    return;
+  }
+
+  next();
+}
+
+function requireUserAdminRead(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const session = req.operatorSession;
+
+  if (!session) {
+    unauthorized(res, "Operator session required", { loginUrl: "/auth/login" });
+    return;
+  }
+
+  if (!sessionHasGlobalRole(session, "superadmin") && !hasPermission(session, "memberships:read") && !hasPermission(session, "memberships:write")) {
+    forbidden(res, "User administration visibility is not available in this session");
     return;
   }
 
@@ -428,6 +446,117 @@ export function createApp(): express.Express {
     } catch (error) {
       res.status(400).json({
         error: error instanceof Error ? error.message : "Unable to switch tenant"
+      });
+    }
+  });
+
+  app.get("/api/admin/users", authenticateOperator, requireUserAdminRead, async (req, res) => {
+    try {
+      const tenantId = typeof req.query.tenantId === "string" ? req.query.tenantId : undefined;
+      const users = await userAdminService.listUsers(req.operatorSession!, { tenantId });
+      res.json({ users });
+    } catch (error) {
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Unable to load users"
+      });
+    }
+  });
+
+  app.get("/api/admin/users/:id", authenticateOperator, requireUserAdminRead, async (req, res) => {
+    try {
+      const userId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const user = await userAdminService.getUser(req.operatorSession!, userId);
+      res.json({ user });
+    } catch (error) {
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Unable to load user"
+      });
+    }
+  });
+
+  app.post("/api/admin/users", authenticateOperator, requireMembershipAdmin, async (req, res) => {
+    try {
+      const input = userCreateSchema.parse(req.body);
+      const result = await userAdminService.createUser(req.operatorSession!, input);
+      res.status(201).json(result);
+    } catch (error) {
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Unable to create user"
+      });
+    }
+  });
+
+  app.patch("/api/admin/users/:id", authenticateOperator, requireMembershipAdmin, async (req, res) => {
+    try {
+      const userId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const input = userUpdateSchema.parse(req.body);
+      const result = await userAdminService.updateUser(req.operatorSession!, userId, input);
+      res.json(result);
+    } catch (error) {
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Unable to update user"
+      });
+    }
+  });
+
+  app.delete("/api/admin/users/:id", authenticateOperator, requireMembershipAdmin, async (req, res) => {
+    try {
+      const userId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const result = await userAdminService.deactivateUser(req.operatorSession!, userId);
+      res.json(result);
+    } catch (error) {
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Unable to deactivate user"
+      });
+    }
+  });
+
+  app.post("/api/admin/users/:id/invite", authenticateOperator, requireMembershipAdmin, async (req, res) => {
+    try {
+      const userId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const result = await userAdminService.inviteUser(req.operatorSession!, userId);
+      res.json(result);
+    } catch (error) {
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Unable to invite user"
+      });
+    }
+  });
+
+  app.get("/api/admin/users/:id/memberships", authenticateOperator, requireUserAdminRead, async (req, res) => {
+    try {
+      const userId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const memberships = await userAdminService.listMemberships(req.operatorSession!, userId);
+      res.json({ memberships });
+    } catch (error) {
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Unable to load memberships"
+      });
+    }
+  });
+
+  app.post("/api/admin/users/:id/memberships", authenticateOperator, requireMembershipAdmin, async (req, res) => {
+    try {
+      const userId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const input = userMembershipCreateSchema.parse(req.body);
+      const result = await userAdminService.addMembership(req.operatorSession!, userId, input);
+      res.status(201).json(result);
+    } catch (error) {
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Unable to create membership"
+      });
+    }
+  });
+
+  app.patch("/api/admin/memberships/:id", authenticateOperator, requireMembershipAdmin, async (req, res) => {
+    try {
+      const membershipId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const input = userMembershipUpdateSchema.parse(req.body);
+      const result = await userAdminService.updateMembership(req.operatorSession!, membershipId, input);
+      res.json(result);
+    } catch (error) {
+      res.status(400).json({
+        error: error instanceof Error ? error.message : "Unable to update membership"
       });
     }
   });

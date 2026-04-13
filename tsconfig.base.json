@@ -24,6 +24,7 @@
       "@asp/approval-service": ["services/approval-service/src"],
       "@asp/operator-insights": ["services/operator-insights/src"],
       "@asp/audit-log": ["services/audit-log/src"],
+      "@asp/user-admin": ["services/user-admin/src"],
       "@asp/user-verification": ["services/user-verification/src"],
       "@asp/orchestration": ["services/orchestration/src"],
       "@asp/helpdesk-triage": ["agents/helpdesk-triage/src"],

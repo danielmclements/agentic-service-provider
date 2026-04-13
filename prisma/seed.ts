@@ -1,6 +1,8 @@
 import { env, prisma } from "@asp/config";
 import { ActionType, PolicyDecision } from "@prisma/client";
 
+const seededSyncTimestamp = new Date("2026-04-12T00:00:00.000Z");
+
 async function seed() {
   const auth0OrganizationId = env.AUTH0_DEFAULT_ORGANIZATION ?? "org_acme";
   const auth0OrganizationName = "acme";
@@ -41,13 +43,18 @@ async function seed() {
       email: "operator@acme.com",
       displayName: "Acme Operator",
       globalRoles: ["internal_operator"],
-      active: true
+      active: true,
+      provisioningStatus: "PROVISIONED",
+      lastAuth0SyncAt: seededSyncTimestamp,
+      lastAuth0SyncError: null
     },
     create: {
       auth0UserId: "auth0|operator-admin",
       email: "operator@acme.com",
       displayName: "Acme Operator",
-      globalRoles: ["internal_operator"]
+      globalRoles: ["internal_operator"],
+      provisioningStatus: "PROVISIONED",
+      lastAuth0SyncAt: seededSyncTimestamp
     }
   });
 
@@ -57,13 +64,18 @@ async function seed() {
       email: "daniel.clements@acme.com",
       displayName: "Daniel Clements",
       globalRoles: ["superadmin", "internal_operator"],
-      active: true
+      active: true,
+      provisioningStatus: "PROVISIONED",
+      lastAuth0SyncAt: seededSyncTimestamp,
+      lastAuth0SyncError: null
     },
     create: {
       auth0UserId: "auth0|daniel.clements",
       email: "daniel.clements@acme.com",
       displayName: "Daniel Clements",
-      globalRoles: ["superadmin", "internal_operator"]
+      globalRoles: ["superadmin", "internal_operator"],
+      provisioningStatus: "PROVISIONED",
+      lastAuth0SyncAt: seededSyncTimestamp
     }
   });
 

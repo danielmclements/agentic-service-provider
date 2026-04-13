@@ -47,6 +47,7 @@ mkdir -p infra/docker/secrets
 printf '%s' 'replace-with-postgres-password' > infra/docker/secrets/postgres_password.txt
 printf '%s' 'postgresql://postgres:replace-with-postgres-password@postgres:5432/agentic_msp' > infra/docker/secrets/database_url.txt
 printf '%s' 'replace-with-auth0-client-secret' > infra/docker/secrets/auth0_client_secret.txt
+printf '%s' 'replace-with-auth0-management-client-secret' > infra/docker/secrets/auth0_management_client_secret.txt
 printf '%s' 'replace-with-openai-api-key-or-leave-empty' > infra/docker/secrets/openai_api_key.txt
 chmod 600 infra/docker/secrets/*.txt
 ```
@@ -62,6 +63,9 @@ chmod 600 infra/docker/secrets/*.txt
 - `AUTH0_AUDIENCE=https://agentic-service-provider/api`
 - `AUTH0_ISSUER=https://<your-tenant>/`
 - `AUTH0_CLIENT_ID=<Auth0 Regular Web App client id>`
+- `AUTH0_MANAGEMENT_CLIENT_ID=<Auth0 machine-to-machine client id for the Management API>`
+- `AUTH0_MANAGEMENT_AUDIENCE=https://<your-tenant>/api/v2/`
+- `AUTH0_PROVISIONING_CONNECTION=<database or enterprise connection name used for creating managed users>`
 - `AUTH0_CALLBACK_URL=https://ops.danielclements.me/auth/callback`
 - `AUTH0_LOGOUT_URL=https://ops.danielclements.me/operator`
 - `AUTH0_DEFAULT_ORGANIZATION=<your Auth0 organization id, for example org_123456789>`
@@ -127,6 +131,7 @@ Set these GitHub environment secrets:
 - `PROD_DATABASE_URL`
 - `PROD_POSTGRES_PASSWORD`
 - `PROD_AUTH0_CLIENT_SECRET`
+- `PROD_AUTH0_MANAGEMENT_CLIENT_SECRET`
 - `PROD_OPENAI_API_KEY`
 - `PROD_TEMPORAL_BASICAUTH_PASSWORD_HASH`
 
@@ -134,7 +139,7 @@ Production non-secret config now lives in the repo at:
 
 - [`production.env`](/Users/danielclements/Documents/DevProjects/agentic-service-provider/deploy/env/production.env)
 
-The workflow copies that file to the server as `.env.production` and appends the Temporal UI basic-auth hash from `PROD_TEMPORAL_BASICAUTH_PASSWORD_HASH`.
+The workflow copies that file to the server as `.env.production`, appends the Temporal UI basic-auth hash from `PROD_TEMPORAL_BASICAUTH_PASSWORD_HASH`, and writes the Auth0 management client secret from `PROD_AUTH0_MANAGEMENT_CLIENT_SECRET`.
 
 The workflow runs on every push to `main` and can also be triggered manually.
 
@@ -194,6 +199,25 @@ Required permissions:
 This API configuration is required for bearer-token callers of the API. It is not required just to establish the browser session for `/operator`.
 
 If a browser-based workflow later requests `audience=https://agentic-service-provider/api`, Auth0 client grants must also allow the application to access that API on the user's behalf.
+
+### 3b. Management API Application
+
+The user-admin backend provisions users through the Auth0 Management API, so create a Machine-to-Machine application for backend administration and authorize it for the Auth0 Management API with the minimum scopes needed for this service:
+
+- `read:users`
+- `create:users`
+- `update:users`
+- `read:users_app_metadata`
+- `create:organization_members`
+- `delete:organization_members`
+- `create:passwords_tickets`
+
+Then set:
+
+- `AUTH0_MANAGEMENT_CLIENT_ID`
+- `PROD_AUTH0_MANAGEMENT_CLIENT_SECRET`
+- `AUTH0_MANAGEMENT_AUDIENCE=https://<your-tenant>/api/v2/`
+- `AUTH0_PROVISIONING_CONNECTION=<connection name used to create Auth0 users>`
 
 ### 4. Roles
 

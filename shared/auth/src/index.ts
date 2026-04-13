@@ -4,12 +4,12 @@ import { env, prisma } from "@asp/config";
 import {
   AuthenticatedSession,
   AuthorizationRole,
-  GLOBAL_ROLES,
   GlobalRole,
-  OPERATOR_PERMISSIONS,
+  GLOBAL_ROLES,
   OperatorPermission,
+  OPERATOR_PERMISSIONS,
+  resolveOperatorPermissions,
   ServicePrincipalContext,
-  TENANT_ROLES,
   TenantRole
 } from "@asp/types";
 
@@ -47,36 +47,6 @@ type SessionMembershipSummary = AuthenticatedSession["memberships"][number];
 
 const JWKS_CACHE_TTL_MS = 5 * 60 * 1000;
 const jwksCache = new Map<string, { publicKey: string; expiresAt: number }>();
-
-const tenantRolePermissions: Record<TenantRole, OperatorPermission[]> = {
-  tenant_admin: [
-    "tickets:read",
-    "tickets:submit",
-    "approvals:read",
-    "approvals:decide",
-    "audit:read",
-    "connectors:admin",
-    "tenants:admin",
-    "memberships:read",
-    "memberships:write"
-  ],
-  tenant_operator: [
-    "tickets:read",
-    "tickets:submit",
-    "approvals:read",
-    "approvals:decide",
-    "audit:read"
-  ],
-  tenant_end_user: [
-    "tickets:read",
-    "tickets:submit"
-  ]
-};
-
-const globalRolePermissions: Record<GlobalRole, OperatorPermission[]> = {
-  superadmin: [...OPERATOR_PERMISSIONS],
-  internal_operator: []
-};
 
 function toBase64Url(input: Buffer | string) {
   return Buffer.from(input)
@@ -248,24 +218,6 @@ function coerceGlobalRoles(input: unknown): GlobalRole[] {
 
 function toTenantRole(role: PrismaTenantRole): TenantRole {
   return role.toLowerCase() as TenantRole;
-}
-
-function unionPermissions(input: { globalRoles: GlobalRole[]; tenantRole?: TenantRole; permissions?: OperatorPermission[] }) {
-  const combined = new Set<OperatorPermission>(input.permissions ?? []);
-
-  for (const role of input.globalRoles) {
-    for (const permission of globalRolePermissions[role] ?? []) {
-      combined.add(permission);
-    }
-  }
-
-  if (input.tenantRole) {
-    for (const permission of tenantRolePermissions[input.tenantRole] ?? []) {
-      combined.add(permission);
-    }
-  }
-
-  return [...combined];
 }
 
 function unionRoles(input: { globalRoles: GlobalRole[]; tenantRole?: TenantRole }): AuthorizationRole[] {
@@ -463,10 +415,10 @@ function buildAuthenticatedSession(input: { session: NonNullable<SessionRecord>;
     ? memberships.find((membership) => membership.membershipId === session.membershipId)
     : undefined;
   const tenantRole = currentMembership?.tenantRole;
-  const permissions = unionPermissions({
+  const permissions = resolveOperatorPermissions({
     globalRoles,
     tenantRole,
-    permissions: currentMembership?.permissions ?? []
+    permissionOverrides: currentMembership?.permissions ?? []
   });
   const authTime = Math.floor(session.authTime.getTime() / 1000);
   const amr = Array.isArray(session.amr) ? session.amr.filter((item): item is string => typeof item === "string") : [];
@@ -576,10 +528,10 @@ export async function createOperatorSession(identity: OperatorIdentity, organiza
   }
 
   const tenantRole = membership ? toTenantRole(membership.role) : undefined;
-  const permissions = unionPermissions({
+  const permissions = resolveOperatorPermissions({
     globalRoles,
     tenantRole,
-    permissions: membership ? coercePermissions(membership.permissions) : []
+    permissionOverrides: membership ? coercePermissions(membership.permissions) : []
   });
   const sessionId = crypto.randomUUID();
 
@@ -621,10 +573,10 @@ export async function switchOperatorTenant(sessionId: string, tenantIdOrSlug: st
 
   const authConnection = await resolveTenantDefaultAuthConnection(tenant.id);
   const tenantRole = membership?.tenantRole;
-  const permissions = unionPermissions({
+  const permissions = resolveOperatorPermissions({
     globalRoles,
     tenantRole,
-    permissions: membership?.permissions ?? []
+    permissionOverrides: membership?.permissions ?? []
   });
 
   await persistOperatorSessionSelection({

@@ -1,5 +1,13 @@
 import { z } from "zod";
-import { ACTION_TYPES, POLICY_DECISIONS, VERIFICATION_METHODS, VERIFICATION_STATUSES } from "@asp/types";
+import {
+  ACTION_TYPES,
+  GLOBAL_ROLES,
+  OPERATOR_PERMISSIONS,
+  POLICY_DECISIONS,
+  TENANT_ROLES,
+  VERIFICATION_METHODS,
+  VERIFICATION_STATUSES
+} from "@asp/types";
 
 export const ticketIntakeSchema = z.object({
   tenant_id: z.string().min(1),
@@ -29,3 +37,46 @@ export const verificationDecisionSchema = z.object({
   method: z.enum(VERIFICATION_METHODS).optional(),
   evidencePayload: z.record(z.string(), z.unknown()).optional()
 });
+
+export const userCreateSchema = z.object({
+  auth0UserId: z.string().min(1).optional(),
+  email: z.email(),
+  displayName: z.string().min(1).optional(),
+  globalRoles: z.array(z.enum(GLOBAL_ROLES)).optional(),
+  initialMembership: z
+    .object({
+      tenantId: z.string().min(1).optional(),
+      tenantRole: z.enum(TENANT_ROLES),
+      permissionOverrides: z.array(z.enum(OPERATOR_PERMISSIONS)).optional(),
+      active: z.boolean().optional()
+    })
+    .optional()
+});
+
+export const userUpdateSchema = z
+  .object({
+    email: z.email().optional(),
+    displayName: z.string().min(1).optional(),
+    active: z.boolean().optional(),
+    globalRoles: z.array(z.enum(GLOBAL_ROLES)).optional()
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "At least one user field must be provided"
+  });
+
+export const userMembershipCreateSchema = z.object({
+  tenantId: z.string().min(1),
+  tenantRole: z.enum(TENANT_ROLES),
+  permissionOverrides: z.array(z.enum(OPERATOR_PERMISSIONS)).optional(),
+  active: z.boolean().optional()
+});
+
+export const userMembershipUpdateSchema = z
+  .object({
+    tenantRole: z.enum(TENANT_ROLES).optional(),
+    permissionOverrides: z.array(z.enum(OPERATOR_PERMISSIONS)).optional(),
+    active: z.boolean().optional()
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "At least one membership field must be provided"
+  });

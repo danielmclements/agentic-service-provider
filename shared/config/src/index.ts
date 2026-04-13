@@ -32,6 +32,7 @@ function resolveSecret(name: string) {
   "DATABASE_URL",
   "OPENAI_API_KEY",
   "AUTH0_CLIENT_SECRET",
+  "AUTH0_MANAGEMENT_CLIENT_SECRET",
   "AUTH0_JWT_SECRET",
   "AUTH0_JWT_PUBLIC_KEY"
 ].forEach(resolveSecret);
@@ -50,6 +51,10 @@ const envSchema = z.object({
   AUTH0_ISSUER: z.string().optional(),
   AUTH0_CLIENT_ID: z.string().min(1).default("operator-console"),
   AUTH0_CLIENT_SECRET: z.string().optional(),
+  AUTH0_MANAGEMENT_CLIENT_ID: z.string().optional(),
+  AUTH0_MANAGEMENT_CLIENT_SECRET: z.string().optional(),
+  AUTH0_MANAGEMENT_AUDIENCE: z.string().optional(),
+  AUTH0_PROVISIONING_CONNECTION: z.string().optional(),
   AUTH0_CALLBACK_URL: z.string().min(1).default("http://localhost:4000/auth/callback"),
   AUTH0_LOGOUT_URL: z.string().min(1).default("http://localhost:4000/operator"),
   AUTH0_DEFAULT_ORGANIZATION: z.string().optional(),
