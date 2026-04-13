@@ -150,6 +150,10 @@
                 Queue
                 <span id="queue-badge" class="tab-badge">0</span>
               </button>
+              <button class="tab-button" type="button" data-tab="users" role="tab" aria-selected="false">
+                Users
+                <span id="users-badge" class="tab-badge">0</span>
+              </button>
               <button class="tab-button" type="button" data-tab="governance" role="tab" aria-selected="false">Governance</button>
             </div>
           </div>
@@ -209,6 +213,78 @@
                   </div>
                 </div>
                 <div id="tickets-list" class="stack-list"></div>
+              </section>
+            </div>
+          </section>
+
+          <section class="tab-panel" data-panel="users" hidden>
+            <div class="content-grid">
+              <section class="surface">
+                <div class="section-header">
+                  <div>
+                    <p class="section-kicker">Identity Admin</p>
+                    <h3>User Directory</h3>
+                  </div>
+                  <p id="users-heading" class="meta-text">Loading managed users.</p>
+                </div>
+                <div id="users-summary-callout"></div>
+                <div id="users-list" class="stack-list"></div>
+              </section>
+
+              <section class="surface">
+                <div class="section-header">
+                  <div>
+                    <p class="section-kicker">Provisioning</p>
+                    <h3>Create User</h3>
+                  </div>
+                </div>
+                <form id="create-user-form" class="stack-form">
+                  <label>
+                    Email
+                    <input id="create-user-email" type="email" required />
+                  </label>
+                  <label>
+                    Display Name
+                    <input id="create-user-display-name" type="text" />
+                  </label>
+                  <label>
+                    Global Roles
+                    <input id="create-user-global-roles" type="text" placeholder="superadmin, internal_operator" />
+                  </label>
+                  <label>
+                    Initial Tenant
+                    <select id="create-user-tenant">
+                      <option value="">Current tenant</option>
+                    </select>
+                  </label>
+                  <label>
+                    Initial Tenant Role
+                    <select id="create-user-tenant-role">
+                      <option value="tenant_end_user">tenant_end_user</option>
+                      <option value="tenant_operator" selected>tenant_operator</option>
+                      <option value="tenant_admin">tenant_admin</option>
+                    </select>
+                  </label>
+                  <label>
+                    Permission Overrides
+                    <input id="create-user-permissions" type="text" placeholder="tickets:read, approvals:read" />
+                  </label>
+                  <button id="create-user-button" class="button button-primary" type="submit">Create And Invite</button>
+                </form>
+                <pre id="create-user-result" class="result-box">No user created yet.</pre>
+              </section>
+
+              <section class="surface surface-wide">
+                <div class="section-header">
+                  <div>
+                    <p class="section-kicker">Selected User</p>
+                    <h3>Edit Identity And Access</h3>
+                  </div>
+                  <p id="selected-user-heading" class="meta-text">Select a user to inspect memberships and sync state.</p>
+                </div>
+                <div id="selected-user-panel" class="detail-stack">
+                  <div class="empty-state">Choose a managed user to edit profile, invite state, and tenant access.</div>
+                </div>
               </section>
             </div>
           </section>

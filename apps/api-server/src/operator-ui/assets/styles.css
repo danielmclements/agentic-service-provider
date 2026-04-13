@@ -465,7 +465,8 @@ body::before {
 }
 
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -477,7 +478,8 @@ textarea {
 }
 
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   outline: none;
   border-color: rgba(49, 108, 255, 0.4);
   box-shadow: 0 0 0 4px rgba(49, 108, 255, 0.12);
@@ -599,6 +601,58 @@ textarea:focus {
     linear-gradient(135deg, rgba(49, 108, 255, 0.05), transparent);
   border: 1px solid rgba(49, 108, 255, 0.08);
   box-shadow: var(--shadow-md);
+}
+
+.admin-user-card {
+  padding: 18px;
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 255, 0.96)),
+    linear-gradient(135deg, rgba(107, 92, 255, 0.04), transparent);
+  border: 1px solid rgba(107, 92, 255, 0.1);
+  box-shadow: var(--shadow-md);
+}
+
+.admin-user-card.is-selected {
+  border-color: rgba(49, 108, 255, 0.28);
+  box-shadow: 0 16px 30px rgba(49, 108, 255, 0.14);
+}
+
+.admin-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.admin-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-card {
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(248, 251, 255, 0.96), rgba(255, 255, 255, 0.96));
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.section-divider {
+  margin: 8px 0 0;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
 }
 
 .card-topline,
@@ -839,6 +893,7 @@ textarea:focus {
   .metric-strip-grid,
   .mini-metric-grid,
   .content-grid,
+  .admin-grid,
   .detail-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -862,6 +917,7 @@ textarea:focus {
   .metric-strip-grid,
   .mini-metric-grid,
   .content-grid,
+  .admin-grid,
   .detail-grid {
     grid-template-columns: 1fr;
   }

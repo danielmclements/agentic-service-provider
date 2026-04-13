@@ -8,7 +8,9 @@
 
   const state = {
     selectedTicketId: null,
-    session: null
+    selectedUserId: null,
+    session: null,
+    users: []
   };
 
   const permissionLabels = {
@@ -56,6 +58,21 @@
     tenantSwitcher: document.getElementById("tenant-switcher"),
     tenantSwitchButton: document.getElementById("tenant-switch-button"),
     membershipsList: document.getElementById("memberships-list"),
+    usersList: document.getElementById("users-list"),
+    usersBadge: document.getElementById("users-badge"),
+    usersHeading: document.getElementById("users-heading"),
+    usersSummaryCallout: document.getElementById("users-summary-callout"),
+    selectedUserPanel: document.getElementById("selected-user-panel"),
+    selectedUserHeading: document.getElementById("selected-user-heading"),
+    createUserForm: document.getElementById("create-user-form"),
+    createUserEmail: document.getElementById("create-user-email"),
+    createUserDisplayName: document.getElementById("create-user-display-name"),
+    createUserGlobalRoles: document.getElementById("create-user-global-roles"),
+    createUserTenant: document.getElementById("create-user-tenant"),
+    createUserTenantRole: document.getElementById("create-user-tenant-role"),
+    createUserPermissions: document.getElementById("create-user-permissions"),
+    createUserButton: document.getElementById("create-user-button"),
+    createUserResult: document.getElementById("create-user-result"),
     authBanner: document.getElementById("auth-banner"),
     queueBadge: document.getElementById("queue-badge"),
     tabButtons: Array.from(document.querySelectorAll("[data-tab]")),
@@ -109,6 +126,42 @@
 
   function formatPermission(permission) {
     return permissionLabels[permission] || permission;
+  }
+
+  function parseCsvList(value) {
+    return String(value || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function canViewUsers() {
+    return hasGlobalRole("superadmin") || hasPermission("memberships:read") || hasPermission("memberships:write");
+  }
+
+  function canManageUsers() {
+    return hasGlobalRole("superadmin") || hasPermission("memberships:write");
+  }
+
+  function defaultAdminTenantId() {
+    if (!state.session) {
+      return "";
+    }
+
+    return state.session.tenantId || "";
+  }
+
+  function renderTenantOptions(selectedTenantId) {
+    if (!state.session || !Array.isArray(state.session.memberships) || !state.session.memberships.length) {
+      return `<option value="">No tenant access</option>`;
+    }
+
+    return state.session.memberships
+      .map(
+        (membership) =>
+          `<option value="${membership.tenantId}" ${membership.tenantId === selectedTenantId ? "selected" : ""}>${membership.tenantName} (${membership.tenantRole})</option>`
+      )
+      .join("");
   }
 
   function chipList(values, options) {
@@ -233,6 +286,206 @@
       .join("");
   }
 
+  function syncCreateUserTenantOptions() {
+    els.createUserTenant.innerHTML = renderTenantOptions(defaultAdminTenantId());
+    els.createUserButton.disabled = !canManageUsers();
+  }
+
+  function renderUserDirectory(users) {
+    state.users = users || [];
+    els.usersBadge.textContent = String(state.users.length);
+    els.usersHeading.textContent = state.users.length
+      ? `${state.users.length} managed user${state.users.length === 1 ? "" : "s"} visible in the current scope.`
+      : "No managed users are visible in the current scope.";
+
+    if (!canViewUsers()) {
+      els.usersSummaryCallout.innerHTML = callout(
+        "neutral",
+        "User admin is not available in this session",
+        "This operator can work tickets, but user directory visibility requires membership read or write access."
+      );
+      els.usersList.innerHTML = `<div class="empty-state">No user directory access in this session.</div>`;
+      els.selectedUserPanel.innerHTML = `<div class="empty-state">Upgrade this session's access to inspect managed users.</div>`;
+      return;
+    }
+
+    els.usersSummaryCallout.innerHTML = canManageUsers()
+      ? callout("neutral", "Provisioning is live", "Create, invite, deactivate, and retune tenant memberships directly from the console.")
+      : callout("warning", "Read-only identity access", "You can inspect managed users and memberships, but mutation flows require membership write access.");
+
+    if (!state.users.length) {
+      els.usersList.innerHTML = `<div class="empty-state">No managed users found yet. Create one to start the onboarding workflow.</div>`;
+      return;
+    }
+
+    if (!state.selectedUserId || !state.users.find((user) => user.id === state.selectedUserId)) {
+      state.selectedUserId = state.users[0].id;
+    }
+
+    els.usersList.innerHTML = state.users
+      .map(
+        (user) => `
+          <article class="admin-user-card ${user.id === state.selectedUserId ? "is-selected" : ""}">
+            <div class="card-topline">
+              ${badge(String(user.provisioningStatus || "").toUpperCase())}
+              ${user.active ? badge("ACTIVE") : badge("INACTIVE")}
+            </div>
+            <h3 class="card-title">${user.displayName || user.email || user.auth0UserId}</h3>
+            <p class="approval-comment">${user.email || "No email recorded"} • ${user.auth0UserId}</p>
+            <div class="chip-row">${chipList(user.globalRoles || [], { emptyLabel: "No global roles", className: "badge-warning" })}</div>
+            <div class="chip-row">${(user.memberships || []).map((membership) => badge(membership.tenantRole)).join("") || `<span class="badge badge-neutral">No memberships</span>`}</div>
+            <div class="admin-toolbar">
+              <button class="button button-secondary" type="button" data-user-select="${user.id}">Inspect</button>
+              <button class="button button-chip" type="button" data-user-invite="${user.id}" ${!canManageUsers() ? "disabled" : ""}>Invite</button>
+            </div>
+          </article>
+        `
+      )
+      .join("");
+  }
+
+  function renderSelectedUser(user) {
+    if (!user) {
+      els.selectedUserHeading.textContent = "Select a user to inspect memberships and sync state.";
+      els.selectedUserPanel.innerHTML = `<div class="empty-state">Choose a managed user to edit profile, invite state, and tenant access.</div>`;
+      return;
+    }
+
+    const memberships = user.memberships || [];
+    const toolbarButtons = `
+      <div class="form-actions">
+        <button class="button button-chip" type="button" data-selected-user-invite="${user.id}" ${!canManageUsers() ? "disabled" : ""}>Send Invite</button>
+        <button class="button button-reject" type="button" data-selected-user-deactivate="${user.id}" ${!canManageUsers() ? "disabled" : ""}>Deactivate User</button>
+      </div>
+    `;
+
+    els.selectedUserHeading.textContent = `${user.displayName || user.email || user.auth0UserId} • ${user.auth0UserId}`;
+    els.selectedUserPanel.innerHTML = `
+      <div class="admin-stack">
+        <article class="admin-card">
+          <div class="card-topline">
+            ${badge(String(user.provisioningStatus || "").toUpperCase())}
+            ${user.active ? badge("ACTIVE") : badge("INACTIVE")}
+          </div>
+          <p class="approval-comment">Last sync ${user.lastAuth0SyncAt ? formatDate(user.lastAuth0SyncAt) : "not recorded"}${user.lastAuth0SyncError ? ` • ${user.lastAuth0SyncError}` : ""}</p>
+          ${toolbarButtons}
+        </article>
+
+        <div class="admin-grid">
+          <article class="admin-card">
+            <div class="section-header">
+              <div>
+                <p class="section-kicker">Identity</p>
+                <h3>Profile</h3>
+              </div>
+            </div>
+            <form class="stack-form" data-user-update-form="${user.id}">
+              <label>
+                Email
+                <input name="email" type="email" value="${user.email || ""}" ${!canManageUsers() ? "disabled" : ""} />
+              </label>
+              <label>
+                Display Name
+                <input name="displayName" type="text" value="${user.displayName || ""}" ${!canManageUsers() ? "disabled" : ""} />
+              </label>
+              <label>
+                Global Roles
+                <input name="globalRoles" type="text" value="${(user.globalRoles || []).join(", ")}" ${!hasGlobalRole("superadmin") ? "disabled" : ""} />
+              </label>
+              <label>
+                Active
+                <select name="active" ${!canManageUsers() ? "disabled" : ""}>
+                  <option value="true" ${user.active ? "selected" : ""}>true</option>
+                  <option value="false" ${!user.active ? "selected" : ""}>false</option>
+                </select>
+              </label>
+              <button class="button button-primary" type="submit" ${!canManageUsers() ? "disabled" : ""}>Save Profile</button>
+            </form>
+          </article>
+
+          <article class="admin-card">
+            <div class="section-header">
+              <div>
+                <p class="section-kicker">Tenant Access</p>
+                <h3>Add Membership</h3>
+              </div>
+            </div>
+            <form class="stack-form" data-add-membership-form="${user.id}">
+              <label>
+                Tenant
+                <select name="tenantId" ${!canManageUsers() ? "disabled" : ""}>
+                  ${renderTenantOptions(defaultAdminTenantId())}
+                </select>
+              </label>
+              <label>
+                Tenant Role
+                <select name="tenantRole" ${!canManageUsers() ? "disabled" : ""}>
+                  <option value="tenant_end_user">tenant_end_user</option>
+                  <option value="tenant_operator" selected>tenant_operator</option>
+                  <option value="tenant_admin">tenant_admin</option>
+                </select>
+              </label>
+              <label>
+                Permission Overrides
+                <input name="permissionOverrides" type="text" placeholder="tickets:read, approvals:read" ${!canManageUsers() ? "disabled" : ""} />
+              </label>
+              <button class="button button-primary" type="submit" ${!canManageUsers() ? "disabled" : ""}>Add Membership</button>
+            </form>
+          </article>
+        </div>
+
+        <article class="admin-card">
+          <div class="section-header">
+            <div>
+              <p class="section-kicker">Memberships</p>
+              <h3>Current Access</h3>
+            </div>
+          </div>
+          <div class="admin-stack">
+            ${
+              memberships.length
+                ? memberships
+                    .map(
+                      (membership) => `
+                        <form class="admin-card section-divider stack-form" data-membership-update-form="${membership.id}">
+                          <div class="card-topline">
+                            ${badge(membership.tenantRole)}
+                            ${membership.active ? badge("ACTIVE") : badge("INACTIVE")}
+                            <span class="badge badge-neutral">${membership.tenantName}</span>
+                          </div>
+                          <label>
+                            Tenant Role
+                            <select name="tenantRole" ${!canManageUsers() ? "disabled" : ""}>
+                              <option value="tenant_end_user" ${membership.tenantRole === "tenant_end_user" ? "selected" : ""}>tenant_end_user</option>
+                              <option value="tenant_operator" ${membership.tenantRole === "tenant_operator" ? "selected" : ""}>tenant_operator</option>
+                              <option value="tenant_admin" ${membership.tenantRole === "tenant_admin" ? "selected" : ""}>tenant_admin</option>
+                            </select>
+                          </label>
+                          <label>
+                            Permission Overrides
+                            <input name="permissionOverrides" type="text" value="${(membership.permissionOverrides || []).join(", ")}" ${!canManageUsers() ? "disabled" : ""} />
+                          </label>
+                          <label>
+                            Active
+                            <select name="active" ${!canManageUsers() ? "disabled" : ""}>
+                              <option value="true" ${membership.active ? "selected" : ""}>true</option>
+                              <option value="false" ${!membership.active ? "selected" : ""}>false</option>
+                            </select>
+                          </label>
+                          <div class="chip-row">${chipList(membership.effectivePermissions || [], { emptyLabel: "No effective permissions", className: "badge-neutral", mapValue: formatPermission })}</div>
+                          <button class="button button-secondary" type="submit" ${!canManageUsers() ? "disabled" : ""}>Update Membership</button>
+                        </form>
+                      `
+                    )
+                    .join("")
+                : `<div class="empty-state">No tenant memberships are attached to this user yet.</div>`
+            }
+          </div>
+        </article>
+      </div>
+    `;
+  }
+
   async function loadMemberships() {
     if (!state.session || (!hasPermission("memberships:read") && !hasGlobalRole("superadmin"))) {
       els.membershipsList.innerHTML = `<div class="empty-state">Membership visibility is not available in this session.</div>`;
@@ -241,6 +494,195 @@
 
     const data = await apiFetch(`/api/memberships?tenantId=${encodeURIComponent(state.session.tenantId)}`);
     renderMemberships(data.memberships);
+  }
+
+  async function loadAdminUsers() {
+    syncCreateUserTenantOptions();
+
+    if (!canViewUsers()) {
+      renderUserDirectory([]);
+      renderSelectedUser(null);
+      return;
+    }
+
+    const data = await apiFetch(`/api/admin/users?tenantId=${encodeURIComponent(state.session.tenantId)}`);
+    renderUserDirectory(data.users || []);
+
+    if (state.selectedUserId) {
+      await loadSelectedUser(state.selectedUserId);
+    } else {
+      renderSelectedUser(null);
+    }
+  }
+
+  async function loadSelectedUser(userId) {
+    if (!userId || !canViewUsers()) {
+      renderSelectedUser(null);
+      return;
+    }
+
+    state.selectedUserId = userId;
+    const data = await apiFetch(`/api/admin/users/${encodeURIComponent(userId)}`);
+    const membershipsData = await apiFetch(`/api/admin/users/${encodeURIComponent(userId)}/memberships`);
+    const user = {
+      ...data.user,
+      memberships: membershipsData.memberships || []
+    };
+
+    state.users = state.users.map((candidate) => (candidate.id === user.id ? user : candidate));
+    renderUserDirectory(state.users);
+    renderSelectedUser(user);
+  }
+
+  async function createUser(event) {
+    event.preventDefault();
+
+    if (!canManageUsers()) {
+      els.createUserResult.textContent = "This session cannot create users. Membership write access is required.";
+      return;
+    }
+
+    const payload = {
+      email: els.createUserEmail.value.trim(),
+      displayName: els.createUserDisplayName.value.trim() || undefined,
+      globalRoles: parseCsvList(els.createUserGlobalRoles.value),
+      initialMembership: {
+        tenantId: els.createUserTenant.value || defaultAdminTenantId(),
+        tenantRole: els.createUserTenantRole.value,
+        permissionOverrides: parseCsvList(els.createUserPermissions.value)
+      }
+    };
+
+    try {
+      const result = await apiFetch("/api/admin/users", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      els.createUserResult.textContent = JSON.stringify(result, null, 2);
+      els.createUserForm.reset();
+      syncCreateUserTenantOptions();
+      await loadAdminUsers();
+      if (result.user && result.user.id) {
+        await loadSelectedUser(result.user.id);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      els.createUserResult.textContent = `User creation failed:\n${message}`;
+    }
+  }
+
+  async function inviteUser(userId) {
+    try {
+      const result = await apiFetch(`/api/admin/users/${encodeURIComponent(userId)}/invite`, {
+        method: "POST"
+      });
+      els.createUserResult.textContent = JSON.stringify(result, null, 2);
+      await loadAdminUsers();
+      await loadSelectedUser(userId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      window.alert(`Invite failed:\n${message}`);
+    }
+  }
+
+  async function deactivateUser(userId) {
+    if (!window.confirm("Deactivate this user and revoke active sessions?")) {
+      return;
+    }
+
+    try {
+      const result = await apiFetch(`/api/admin/users/${encodeURIComponent(userId)}`, {
+        method: "DELETE"
+      });
+      els.createUserResult.textContent = JSON.stringify(result, null, 2);
+      await loadAdminUsers();
+      await loadSelectedUser(userId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      window.alert(`Deactivation failed:\n${message}`);
+    }
+  }
+
+  async function updateUserForm(form, userId) {
+    const formData = new FormData(form);
+    const payload = {
+      email: String(formData.get("email") || "").trim() || undefined,
+      displayName: String(formData.get("displayName") || "").trim() || undefined,
+      globalRoles: parseCsvList(formData.get("globalRoles")),
+      active: String(formData.get("active")) === "true"
+    };
+
+    try {
+      const result = await apiFetch(`/api/admin/users/${encodeURIComponent(userId)}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+      els.createUserResult.textContent = JSON.stringify(result, null, 2);
+      await loadAdminUsers();
+      await loadSelectedUser(userId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      window.alert(`User update failed:\n${message}`);
+    }
+  }
+
+  async function addMembership(form, userId) {
+    const formData = new FormData(form);
+    const payload = {
+      tenantId: String(formData.get("tenantId") || "").trim(),
+      tenantRole: String(formData.get("tenantRole") || "").trim(),
+      permissionOverrides: parseCsvList(formData.get("permissionOverrides"))
+    };
+
+    try {
+      const result = await apiFetch(`/api/admin/users/${encodeURIComponent(userId)}/memberships`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+      els.createUserResult.textContent = JSON.stringify(result, null, 2);
+      await loadAdminUsers();
+      await loadSelectedUser(userId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      window.alert(`Membership create failed:\n${message}`);
+    }
+  }
+
+  async function updateMembership(form, membershipId) {
+    const formData = new FormData(form);
+    const payload = {
+      tenantRole: String(formData.get("tenantRole") || "").trim(),
+      permissionOverrides: parseCsvList(formData.get("permissionOverrides")),
+      active: String(formData.get("active")) === "true"
+    };
+
+    try {
+      const result = await apiFetch(`/api/admin/memberships/${encodeURIComponent(membershipId)}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+      els.createUserResult.textContent = JSON.stringify(result, null, 2);
+      await loadAdminUsers();
+      if (state.selectedUserId) {
+        await loadSelectedUser(state.selectedUserId);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      window.alert(`Membership update failed:\n${message}`);
+    }
   }
 
   function updateActionAvailability() {
@@ -719,6 +1161,10 @@
       els.approvalsList.innerHTML = `<div class="empty-state">No approval data is available until an authenticated tenant session is loaded.</div>`;
       els.ticketsList.innerHTML = `<div class="empty-state">No ticket data is available until you sign in.</div>`;
       els.membershipsList.innerHTML = `<div class="empty-state">Sign in to inspect tenant memberships.</div>`;
+      els.usersSummaryCallout.innerHTML = "";
+      els.usersList.innerHTML = `<div class="empty-state">Sign in to access user administration.</div>`;
+      els.createUserResult.textContent = "Sign in to create and manage users.";
+      renderSelectedUser(null);
       renderAudit([], null);
       els.detailList.innerHTML = `<div class="empty-state">Sign in to inspect ticket decision paths.</div>`;
       return;
@@ -735,6 +1181,7 @@
       renderApprovals(summary.pendingApprovals);
       renderTickets(summary.recentTickets);
       await loadMemberships();
+      await loadAdminUsers();
       els.lastRefresh.textContent = `Last refreshed ${new Date().toLocaleTimeString()}`;
 
       if (state.selectedTicketId) {
@@ -840,6 +1287,19 @@
   }
 
   function handleListActions(event) {
+    const selectUserButton = event.target.closest("[data-user-select]");
+    if (selectUserButton) {
+      loadSelectedUser(selectUserButton.getAttribute("data-user-select"));
+      setActiveTab("users");
+      return;
+    }
+
+    const inviteUserButton = event.target.closest("[data-user-invite]");
+    if (inviteUserButton) {
+      inviteUser(inviteUserButton.getAttribute("data-user-invite"));
+      return;
+    }
+
     const approvalButton = event.target.closest("[data-approval-id]");
 
     if (approvalButton) {
@@ -858,6 +1318,41 @@
       } else {
         renderAudit([], null);
       }
+    }
+  }
+
+  function handleSelectedUserActions(event) {
+    const inviteButton = event.target.closest("[data-selected-user-invite]");
+    if (inviteButton) {
+      inviteUser(inviteButton.getAttribute("data-selected-user-invite"));
+      return;
+    }
+
+    const deactivateButton = event.target.closest("[data-selected-user-deactivate]");
+    if (deactivateButton) {
+      deactivateUser(deactivateButton.getAttribute("data-selected-user-deactivate"));
+    }
+  }
+
+  function handleSelectedUserSubmit(event) {
+    const updateUserTarget = event.target.closest("[data-user-update-form]");
+    if (updateUserTarget) {
+      event.preventDefault();
+      updateUserForm(updateUserTarget, updateUserTarget.getAttribute("data-user-update-form"));
+      return;
+    }
+
+    const addMembershipTarget = event.target.closest("[data-add-membership-form]");
+    if (addMembershipTarget) {
+      event.preventDefault();
+      addMembership(addMembershipTarget, addMembershipTarget.getAttribute("data-add-membership-form"));
+      return;
+    }
+
+    const updateMembershipTarget = event.target.closest("[data-membership-update-form]");
+    if (updateMembershipTarget) {
+      event.preventDefault();
+      updateMembership(updateMembershipTarget, updateMembershipTarget.getAttribute("data-membership-update-form"));
     }
   }
 
@@ -885,13 +1380,18 @@
 
   function init() {
     els.ticketForm.addEventListener("submit", submitTicket);
+    els.createUserForm.addEventListener("submit", createUser);
     els.refreshButton.addEventListener("click", loadDashboard);
     els.logoutButton.addEventListener("click", logout);
     els.tenantSwitchButton.addEventListener("click", switchTenant);
     document.addEventListener("click", handleTicketScenarios);
     els.approvalsList.addEventListener("click", handleListActions);
     els.ticketsList.addEventListener("click", handleListActions);
+    els.usersList.addEventListener("click", handleListActions);
+    els.selectedUserPanel.addEventListener("click", handleSelectedUserActions);
+    els.selectedUserPanel.addEventListener("submit", handleSelectedUserSubmit);
     initTabs();
+    syncCreateUserTenantOptions();
     loadDashboard();
     window.setInterval(loadDashboard, 15000);
   }
